@@ -1,0 +1,12 @@
+exclude = [
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.pyc",
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".tox",
+    ".pytest_cache",
+]

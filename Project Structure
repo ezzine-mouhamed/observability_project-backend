@@ -1,0 +1,21 @@
+agent-observability-ollama/
+├── app/
+│   ├── api/                    # REST API endpoints
+│   ├── services/              # Business logic
+│   │   ├── task_service.py    # Task execution service
+│   │   ├── llm_client.py      # Ollama LLM client
+│   │   └── decision_engine.py # LLM-assisted decision engine
+│   ├── observability/         # Tracing and metrics
+│   ├── models/               # Database models
+│   ├── repositories/         # Data access layer
+│   ├── schemas/             # Pydantic schemas
+│   ├── utils/               # Utilities
+│   │   ├── ollama_utils.py  # Ollama management
+│   │   └── logger.py        # Structured logging
+│   └── config.py            # Configuration
+├── tests/                   # Test suite
+├── examples/               # Example scripts
+│   └── ollama_demo.py      # Demonstration script
+├── requirements.txt        # Python dependencies
+├── run.py                 # Application entry point
+└── README.md              # This file
