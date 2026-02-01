@@ -55,7 +55,6 @@ logs/
 *.db-journal
 
 # Ollama models (large files)
-models/
 ollama_models/
 
 # Docker
