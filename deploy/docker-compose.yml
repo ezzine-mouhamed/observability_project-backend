@@ -17,14 +17,6 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-
   ollama:
     image: ollama/ollama:0.15.2
     container_name: ollama
@@ -64,7 +56,6 @@ services:
       - "5000:5000"
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/observability
-      - REDIS_URL=redis://redis:6379/0
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_DEFAULT_MODEL=deepseek-coder
       - FLASK_DEBUG=false
@@ -75,8 +66,6 @@ services:
         condition: service_healthy
       ollama:
         condition: service_started
-      redis:
-        condition: service_started
     volumes:
       - ../logs:/app/logs
     restart: unless-stopped
@@ -84,5 +73,4 @@ services:
 volumes:
   postgres_data:
   ollama_data:
-  redis_data:
   pgadmin_data:

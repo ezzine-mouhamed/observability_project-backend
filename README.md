@@ -1,44 +1,201 @@
-# Agent Observability and Execution Tracing System with Ollama
+# Agent Observability Platform
 
-A production-ready backend service that demonstrates comprehensive observability and execution tracing for AI-powered tasks using Ollama for local LLM inference. The system captures execution traces, decision contexts, failure signals, and performance metrics.
+A backend service for AI task execution with built-in execution tracing using Ollama for local LLM inference.
+
+The platform records hierarchical execution traces (with spans, decisions, errors, and logs) in PostgreSQL.  
+All observability data is stored as traces in the database.
+
+---
 
 ## Features
 
-- **Ollama Integration**: Local LLM inference with multiple model support
-- **Execution Tracing**: Hierarchical trace capture with parent-child relationships
-- **Decision Context**: Records why specific execution paths were chosen using LLM-assisted decision making
-- **Structured Logging**: JSON-formatted logs for machine readability
-- **Performance Metrics**: Aggregated metrics for monitoring and optimization
-- **Error Context**: Rich error information with execution context
-- **Embedding Support**: Text embeddings using Ollama models
-- **Model Management**: API endpoints for Ollama model management
+- AI task execution (summarize, analyze, classify, extract, translate)
+- Hierarchical execution tracing (trace + spans)
+- LLM-assisted decision tracking
+- Error context attached to traces
+- Ollama integration (local models)
+- PostgreSQL persistence
+- pgAdmin included for DB inspection
 
-## Architecture Overview
+---
 
-### Core Components
+## Architecture
 
-1. **Task Execution Service**: Manages AI task execution with built-in observability
-2. **Ollama LLM Client**: Local LLM inference with fallback mechanisms
-3. **Decision Engine**: LLM-assisted decision making with tracing
-4. **Observability Layer**: Captures traces, metrics, and events throughout execution
-5. **Persistence Layer**: Stores execution data for analysis and debugging
+**Services (Docker Compose):**
 
-### Supported Task Types
+- `app` – Flask backend API
+- `postgres` – Main database (stores traces)
+- `ollama` – Local LLM runtime
+- `pgadmin` – Database UI
 
-- `summarize`: Text summarization
-- `analyze`: Data analysis and insights
-- `classify`: Text classification
-- `extract`: Information extraction
-- `translate`: Text translation
+All execution traces are stored in PostgreSQL.  
 
-## Prerequisites
+---
 
-### System Requirements
+# Setup Guide
 
-- Python 3.11+
-- Ollama installed and running
-- SQLite (for development) or PostgreSQL (for production)
+## 1. Requirements
 
-### Ollama Setup
+- Docker
+- Docker Compose
 
-1. **Install Ollama**:
+---
+
+## 2. Environment Configuration
+
+Navigate to the `deploy` folder:
+
+```bash
+cd deploy
+```
+
+Copy the example environment file if needed:
+
+```bash
+cp env.example .env
+```
+
+(Adjust values if required.)
+
+---
+
+## 3. Start the Platform
+
+From inside the `deploy` folder:
+
+```bash
+docker compose up --build
+```
+
+This will start:
+
+- PostgreSQL on `localhost:5432`
+- Ollama on `localhost:11434`
+- pgAdmin on `http://localhost:5050`
+- Backend API on `http://localhost:5000`
+
+---
+
+## 4. Ollama Model
+
+The container automatically:
+
+- Starts `ollama serve`
+- Pulls the `deepseek-coder` model
+
+Default model used by the app:
+```
+deepseek-coder
+```
+
+---
+
+## 5. Accessing Services
+
+### Backend API
+```
+http://localhost:5000
+```
+
+### pgAdmin
+```
+http://localhost:5050
+Email: admin@observability.com
+Password: admin
+```
+
+PostgreSQL connection details inside pgAdmin:
+
+- Host: `postgres`
+- Username: `postgres`
+- Password: `postgres`
+- Database: `observability`
+
+---
+
+## Data Model (High-Level)
+
+### Trace
+- trace_id
+- start_time
+- end_time
+- metadata
+
+### Span
+- span_id
+- parent_span_id
+- operation_name
+- attributes
+- start_time
+- end_time
+
+### Events / Logs
+- trace_id
+- span_id
+- level
+- message
+- payload
+
+All execution activity is captured through traces and spans stored in PostgreSQL.
+
+---
+
+## API Overview
+
+### Execute Task
+```
+POST /api/tasks/{type}
+```
+
+Example types:
+- summarize
+- analyze
+- classify
+- extract
+- translate
+
+Returns a `trace_id`.
+
+---
+
+### Get Trace
+```
+GET /api/traces/{trace_id}
+```
+
+Returns full trace with spans and events.
+
+---
+
+### List Models
+```
+GET /api/models
+```
+
+---
+
+## Logs
+
+Application logs are mounted to:
+
+```
+observability_project/logs/
+```
+
+---
+
+## Stopping the Platform
+
+From `deploy` folder:
+
+```bash
+docker compose down
+```
+
+To remove volumes:
+
+```bash
+docker compose down -v
+```
+
+---

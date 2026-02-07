@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
+import statistics
 from typing import Any, Dict, Optional
 
-from sqlalchemy import JSON, Integer, String, DateTime, Boolean, ForeignKey
+from sqlalchemy import JSON, Float, Integer, String, DateTime, Boolean, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.extensions import db
@@ -20,6 +21,9 @@ class ExecutionTrace(db.Model):
     context: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
     decisions: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=list)
     events: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=list)
+    agent_observations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=list)  # NEW
+    quality_metrics: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=dict)     # NEW
+    agent_context: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=dict)       # NEW
     error: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_time: Mapped[Optional[datetime]] = mapped_column(
@@ -30,11 +34,16 @@ class ExecutionTrace(db.Model):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+    # NEW: Performance and quality indicators
+    performance_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    complexity_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    efficiency_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     task = relationship("Task", back_populates="traces")
 
     def __repr__(self) -> str:
-        return f"<Trace {self.trace_id} ({self.operation}) - {'success' if self.success else 'failed'}>"
+        quality = self.quality_metrics.get("quality_score", 0) if self.quality_metrics else 0
+        return f"<Trace {self.trace_id} ({self.operation}) - success:{self.success} quality:{quality:.2f}>"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -46,10 +55,53 @@ class ExecutionTrace(db.Model):
             "context": self.context,
             "decisions": self.decisions or [],
             "events": self.events or [],
+            "agent_observations": self.agent_observations or [],
+            "quality_metrics": self.quality_metrics or {},
+            "agent_context": self.agent_context or {},
             "error": self.error,
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "end_time": self.end_time.isoformat() if self.end_time else None,
             "duration_ms": self.duration_ms,
             "success": self.success,
             "created_at": self.created_at.isoformat(),
+            "performance_score": self.performance_score,
+            "complexity_score": self.complexity_score,
+            "efficiency_score": self.efficiency_score,
         }
+    
+    def calculate_performance_score(self) -> float:
+        """Calculate a performance score based on various metrics."""
+        scores = []
+        
+        # Success factor
+        scores.append(1.0 if self.success else 0.0)
+        
+        # Duration factor (inverse - faster is better)
+        if self.duration_ms:
+            # Normalize duration (0-10000ms maps to 1.0-0.0)
+            duration_score = max(0.0, 1.0 - (self.duration_ms / 10000))
+            scores.append(duration_score)
+        
+        # Quality factor
+        if self.quality_metrics and "quality_score" in self.quality_metrics:
+            scores.append(self.quality_metrics["quality_score"])
+        
+        # Decision quality factor
+        if self.decisions:
+            decision_qualities = []
+            for decision in self.decisions:
+                if isinstance(decision, dict) and "quality" in decision:
+                    quality = decision["quality"]
+                    if isinstance(quality, dict) and "overall_score" in quality:
+                        decision_qualities.append(quality["overall_score"])
+            
+            if decision_qualities:
+                scores.append(statistics.mean(decision_qualities))
+        
+        # Calculate average if we have scores
+        if scores:
+            self.performance_score = sum(scores) / len(scores)
+        else:
+            self.performance_score = 0.5  # Default
+        
+        return self.performance_score

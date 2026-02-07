@@ -9,12 +9,11 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     TRACING_ENABLED = True
-    METRICS_ENABLED = True
     LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
     DEFAULT_TASK_TIMEOUT = 60
     MAX_RETRY_ATTEMPTS = 3
-    LLM_TIMEOUT_SECONDS = 10
+    LLM_TIMEOUT_SECONDS = 60
 
     DEBUG = os.environ.get("FLASK_DEBUG", "False").lower() == "true"
 

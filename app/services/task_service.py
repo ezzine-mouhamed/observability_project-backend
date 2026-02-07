@@ -6,7 +6,6 @@ from app.exceptions.base import AppException
 from app.exceptions.validation import ValidationError
 from app.models.task import Task
 from app.models.trace import ExecutionTrace
-from app.observability.metrics import MetricsCollector
 from app.observability.tracer import Tracer
 from app.repositories.task_repository import TaskRepository
 from app.repositories.trace_repository import TraceRepository
@@ -32,7 +31,6 @@ class TaskService:
         self.decision_engine = DecisionEngine()
         self.llm_client = LLMClient()
         self.tracer = Tracer()
-        self.metrics = MetricsCollector()
 
     def execute_task(self, task_data: TaskCreate) -> TaskResult:
         """Execute a task with full observability."""
@@ -73,14 +71,7 @@ class TaskService:
                     error=result.get("error")
                 )
                 self.task_repo.save(task)
-                
-                # Record metrics
-                self.metrics.record_task_completion(
-                    task.task_type, 
-                    task.status, 
-                    task.execution_time_ms or 0
-                )
-                
+
                 logger.info(
                     "Task execution completed",
                     extra={
@@ -309,6 +300,16 @@ class TaskService:
             step_results = []
             for step_idx, step in enumerate(execution_plan["steps"]):
                 step_result = self._execute_step(step, task, step_idx)
+                logger.debug(
+                    "Step execution result",
+                    extra={
+                        "task_id": task.id,
+                        "step_index": step_idx,
+                        "step_name": step.get("name"),
+                        "step_type": step.get("type"),
+                        "step_success": step_result,
+                    }
+                )
                 step_results.append(step_result)
                 
                 # Stop if step failed and not configured to continue
@@ -634,18 +635,5 @@ class TaskService:
                     "task_id": task_id,
                     "original_exception_type": type(e).__name__,
                     "database_error": True,
-                }
-            ) from e
-    
-    def get_metrics_summary(self) -> Dict[str, Any]:
-        """Get metrics summary."""
-        try:
-            return self.metrics.get_summary()
-        except Exception as e:
-            raise AppException(
-                message=f"Failed to retrieve metrics: {str(e)}",
-                extra={
-                    "original_exception_type": type(e).__name__,
-                    "metrics_error": True,
                 }
             ) from e

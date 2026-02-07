@@ -90,13 +90,3 @@ class TraceInfo(BaseModel):
     success: bool
     decision_count: int
     event_count: int
-
-
-class MetricsSummary(BaseModel):
-    """Schema for metrics summary."""
-
-    task_metrics: Dict[str, Any]
-    llm_metrics: Dict[str, Any]
-    decision_metrics: Dict[str, Any]
-    error_metrics: Dict[str, Any]
-    timestamp: datetime

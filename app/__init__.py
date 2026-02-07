@@ -4,6 +4,8 @@ from app.config import Config
 from app.extensions import db, migrate
 from app.utils.logger import setup_logging
 from app.api.error_handlers import register_error_handlers
+from app.api.routes.tasks import task_bp
+from app.api.routes.observability import observability_bp
 
 
 def create_app(config_class=Config):
@@ -19,14 +21,11 @@ def create_app(config_class=Config):
     setup_logging()
     
     # Register blueprints
-    from app.api.routes import bp as api_bp
-    app.register_blueprint(api_bp)
+    app.register_blueprint(task_bp)
+    
+    # Register observability routes
+    app.register_blueprint(observability_bp)
     
     register_error_handlers(app)
-    
-    # Create database tables (in development)
-    if app.config.get("DEBUG", False):
-        with app.app_context():
-            db.create_all()
-    
+
     return app

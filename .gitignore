@@ -81,7 +81,6 @@ deploy/.env
 # Docker volumes
 ollama_data/
 postgres_data/
-redis_data/
 pgadmin_data/
 
 # Local development

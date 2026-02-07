@@ -163,24 +163,3 @@ def log_error_with_context(
         "error_message": str(error),
         "context": context,
     }, exc_info=True)  # ADDED exc_info=True to include stack trace
-
-
-def log_performance_metrics(
-    operation: str,
-    duration_ms: float,
-    metadata: Optional[Dict[str, Any]] = None,
-    logger: Optional[logging.Logger] = None,
-):
-    """Log performance metrics."""
-    if logger is None:
-        logger = get_logger(__name__)
-
-    extra_data = {
-        "operation": operation,
-        "duration_ms": f"{duration_ms:.2f}ms",
-    }
-    
-    if metadata:
-        extra_data.update(metadata)
-
-    logger.info(f"Performance: {operation}", extra=extra_data)

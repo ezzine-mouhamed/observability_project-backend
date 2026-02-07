@@ -46,7 +46,6 @@ logs/
 *.db
 *.sqlite
 *.sqlite3
-migrations/
 
 # Ollama models (large files)
 ollama_models/
