@@ -92,8 +92,8 @@ class Tracer:
             "thread_id": threading.get_ident(),
             "decisions": [],
             "events": [],
-            "agent_observations": [],  # New: Agent self-observations
-            "quality_metrics": {},     # New: Quality metrics
+            "agent_observations": [],  # Agent self-observations
+            "quality_metrics": {},     # Quality metrics
             "error": None,
             "success": True,
             "agent_context": self.context.agent_context.copy(),  # Include current agent context
@@ -415,8 +415,8 @@ class Tracer:
                 context=trace_data.get("context", {}),
                 decisions=trace_data.get("decisions", []),
                 events=trace_data.get("events", []),
-                agent_observations=trace_data.get("agent_observations", []),  # New field
-                quality_metrics=trace_data.get("quality_metrics", {}),        # New field
+                agent_observations=trace_data.get("agent_observations", []),
+                quality_metrics=trace_data.get("quality_metrics", {}),
                 error=trace_data.get("error"),
                 start_time=trace_data["start_time"],
                 end_time=end_time,

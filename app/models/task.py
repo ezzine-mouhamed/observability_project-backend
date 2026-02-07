@@ -27,7 +27,7 @@ class Task(db.Model):
     completed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # NEW: Quality and performance fields
+    # Quality and performance fields
     quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     complexity_level: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     agent_involved: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

@@ -21,9 +21,9 @@ class ExecutionTrace(db.Model):
     context: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
     decisions: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=list)
     events: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=list)
-    agent_observations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=list)  # NEW
-    quality_metrics: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=dict)     # NEW
-    agent_context: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=dict)       # NEW
+    agent_observations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=list)
+    quality_metrics: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=dict)
+    agent_context: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=dict)
     error: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_time: Mapped[Optional[datetime]] = mapped_column(
@@ -34,7 +34,7 @@ class ExecutionTrace(db.Model):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
-    # NEW: Performance and quality indicators
+    # Performance and quality indicators
     performance_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     complexity_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     efficiency_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
