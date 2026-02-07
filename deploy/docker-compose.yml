@@ -54,13 +54,8 @@ services:
     container_name: observability-app
     ports:
       - "5000:5000"
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/observability
-      - OLLAMA_BASE_URL=http://ollama:11434
-      - OLLAMA_DEFAULT_MODEL=deepseek-coder
-      - FLASK_DEBUG=false
-      - LOG_LEVEL=INFO
-      - SECRET_KEY=dev-secret-key-change-me-in-production
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy

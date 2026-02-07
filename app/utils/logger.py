@@ -16,20 +16,37 @@ class StructuredTextFormatter(logging.Formatter):
         # Get basic message
         message = record.getMessage()
         
-        # Add extra fields if present - THIS IS WHAT WAS MISSING
+        # Add extra fields if present - FIXED VERSION
         extra_info = ""
-        if hasattr(record, "extra") and record.extra:
-            # Format extra fields as key=value pairs
-            extra_parts = []
+        
+        # Check for extra attributes in the record (added via extra= parameter)
+        # Exclude standard LogRecord attributes
+        standard_attrs = {
+            'args', 'asctime', 'created', 'exc_info', 'exc_text', 'filename',
+            'funcName', 'levelname', 'levelno', 'lineno', 'module', 'msecs',
+            'message', 'msg', 'name', 'pathname', 'process', 'processName',
+            'relativeCreated', 'stack_info', 'thread', 'threadName'
+        }
+        
+        extra_parts = []
+        for attr_name in dir(record):
+            if not attr_name.startswith('_') and attr_name not in standard_attrs:
+                try:
+                    attr_value = getattr(record, attr_name)
+                    # Skip if it's a method or None
+                    if not callable(attr_value) and attr_value is not None:
+                        extra_parts.append(f"{attr_name}={self._format_value(attr_value)}")
+                except AttributeError:
+                    pass
+        
+        # Also check the extra dict that might have been added by ContextFilter
+        if hasattr(record, "extra") and isinstance(record.extra, dict):
             for key, value in record.extra.items():
-                if key == "timestamp":
-                    continue  # Skip timestamp, we have our own
-                if key == "traceback" and record.exc_info:
-                    continue  # Skip traceback if we have exc_info
-                extra_parts.append(f"{key}={self._format_value(value)}")
-            
-            if extra_parts:
-                extra_info = " | " + " | ".join(extra_parts)
+                if key not in ['timestamp', 'traceback']:
+                    extra_parts.append(f"{key}={self._format_value(value)}")
+        
+        if extra_parts:
+            extra_info = " | " + " | ".join(extra_parts)
         
         # Build the log line with extra info
         log_line = f"{timestamp} {record.levelname:8} {record.name:40} - {message}{extra_info}"
@@ -44,7 +61,7 @@ class StructuredTextFormatter(logging.Formatter):
                 log_line = f"{log_line}\n    {formatted_exc}"
         
         return log_line
-    
+
     def _format_value(self, value: Any) -> str:
         """Format a value for log output."""
         if isinstance(value, dict):

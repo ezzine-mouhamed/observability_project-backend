@@ -62,7 +62,7 @@ class TaskService:
                 logger.info("Task execution started", extra={"task_id": task.id})
                 
                 # Execute task logic
-                result = self._execute_task_logic(task, task_data)
+                result = self._execute_task_logic(task)
                 
                 # Complete task
                 task.complete_execution(
@@ -273,8 +273,8 @@ class TaskService:
                 status="failed",
                 error_message=f"Multiple errors: {exception}; {e}",
             )
-    
-    def _execute_task_logic(self, task: Task, task_data: TaskCreate) -> Dict[str, Any]:
+
+    def _execute_task_logic(self, task: Task) -> Dict[str, Any]:
         """Execute the actual task logic with decision points."""
         try:
             # Get execution plan
@@ -296,21 +296,32 @@ class TaskService:
             # Validate execution plan
             self._validate_execution_plan(execution_plan, task)
             
-            # Execute steps
+            # Execute steps with data passing
             step_results = []
+            current_data = task.input_data  # Start with input data
+            
             for step_idx, step in enumerate(execution_plan["steps"]):
-                step_result = self._execute_step(step, task, step_idx)
+                # Pass current data to the step
                 logger.debug(
-                    "Step execution result",
+                    f"Executing step {step_idx}: {step['name']} with current data preview",
                     extra={
-                        "task_id": task.id,
-                        "step_index": step_idx,
-                        "step_name": step.get("name"),
-                        "step_type": step.get("type"),
-                        "step_success": step_result,
+                        "step_name": step["name"],
+                        "current_data_preview": str(current_data)[:100] if current_data else None,
+                    }
+                )
+                step_result = self._execute_step(step, task, step_idx, current_data)
+                logger.debug(
+                    f"Step {step_idx} result: {step_result}",
+                    extra={
+                        "step_name": step["name"],
+                        "step_result": step_result,
                     }
                 )
                 step_results.append(step_result)
+                
+                # If step was successful and has output, update current_data for next step
+                if step_result["success"] and step_result.get("output") is not None:
+                    current_data = step_result["output"]
                 
                 # Stop if step failed and not configured to continue
                 if not step_result["success"] and not step.get("continue_on_failure", False):
@@ -326,7 +337,7 @@ class TaskService:
                     break
             
             # Process final results
-            return self._process_results(step_results, task)
+            return self._process_results(step_results, task, current_data)
             
         except (AppException, ValidationError):
             # Re-raise our custom exceptions
@@ -358,8 +369,8 @@ class TaskService:
                 }
             )
     
-    def _execute_step(self, step: Dict[str, Any], task: Task, step_index: int) -> Dict[str, Any]:
-        """Execute a single step."""
+    def _execute_step(self, step: Dict[str, Any], task: Task, step_index: int, current_data: Any = None) -> Dict[str, Any]:
+        """Execute a single step with given data."""
         step_start = time.time()
         
         with self.tracer.start_trace(
@@ -377,13 +388,16 @@ class TaskService:
                     "step_index": step_index,
                 })
                 
+                # Use current_data if provided, otherwise use task input
+                data_to_process = current_data if current_data is not None else task.input_data
+                
                 # Execute based on step type
                 if step["type"] == "llm_call":
-                    output = self._execute_llm_call(step, task)
+                    output = self._execute_llm_call(step, task, data_to_process)
                 elif step["type"] == "decision_point":
-                    output = self._evaluate_decision_point(step, task)
+                    output = self._evaluate_decision_point(step, task, data_to_process)
                 elif step["type"] == "data_transform":
-                    output = self._transform_data(step, task)
+                    output = self._transform_data(step, task, data_to_process)
                 else:
                     raise ValidationError(
                         message=f"Unknown step type: {step['type']}",
@@ -460,21 +474,20 @@ class TaskService:
                     "step_type": step["type"],
                 }
     
-    def _execute_llm_call(self, step: Dict[str, Any], task: Task) -> Any:
-        """Execute LLM call."""
+    def _execute_llm_call(self, step: Dict[str, Any], task: Task, data: Any) -> Any:
+        """Execute LLM call with given data."""
         try:
             prompt = step["parameters"]["prompt"]
             llm_params = step["parameters"].get("llm_params", {})
             
-            logger.debug("Executing LLM call", extra={
-                "task_id": task.id,
-                "prompt_preview": prompt[:100] if prompt else None,
-                "llm_params": llm_params,
-            })
+            logger.debug(
+                f"Executing LLM call - task_id: {task.id}, input_preview: {task if task else None}",
+                extra={"llm_params": llm_params}
+            )
             
             return self.llm_client.process(
                 prompt,
-                task.input_data,
+                data,  # Use the provided data
                 **llm_params,
             )
             
@@ -490,9 +503,9 @@ class TaskService:
                     "original_exception_type": type(e).__name__,
                 }
             ) from e
-    
-    def _evaluate_decision_point(self, step: Dict[str, Any], task: Task) -> bool:
-        """Evaluate a decision point."""
+
+    def _evaluate_decision_point(self, step: Dict[str, Any], task: Task, data: Any) -> bool:
+        """Evaluate a decision point with given data."""
         try:
             condition = step["parameters"]["condition"]
             
@@ -502,8 +515,9 @@ class TaskService:
             })
             
             return self.decision_engine.evaluate_condition(
-                condition, 
-                task.input_data
+                condition,
+                task,
+                data  # Use the provided data
             )
             
         except (AppException, ValidationError):
@@ -518,28 +532,33 @@ class TaskService:
                     "original_exception_type": type(e).__name__,
                 }
             ) from e
-    
-    def _transform_data(self, step: Dict[str, Any], task: Task) -> Any:
-        """Transform data."""
+
+    def _transform_data(self, step: Dict[str, Any], task: Task, data: Any) -> Any:
+        """Transform given data."""
         try:
             transform_type = step["parameters"]["transform"]
             
             if transform_type == "extract_key_points":
-                if isinstance(task.input_data, dict):
-                    return list(task.input_data.keys())[:5]
-                elif isinstance(task.input_data, list):
-                    return task.input_data[:3]
+                if isinstance(data, dict):
+                    return list(data.keys())[:5]
+                elif isinstance(data, list):
+                    return data[:3]
                 else:
                     raise ValidationError(
                         message="Cannot extract key points from non-dict/list input",
                         field="input_data",
-                        value=type(task.input_data).__name__,
+                        value=type(data).__name__,
                         validation_rules={"type": ["dict", "list"]},
                         extra={"transform_type": transform_type}
                     )
             elif transform_type == "summarize":
-                input_str = str(task.input_data)
-                return f"Summary of {len(input_str)} characters"
+                # For summarize, if data is an LLM result dict, extract content
+                if isinstance(data, dict) and "content" in data:
+                    summary = data["content"]
+                else:
+                    summary = str(data)
+                
+                return summary
             else:
                 raise ValidationError(
                     message=f"Unknown transform type: {transform_type}",
@@ -561,19 +580,27 @@ class TaskService:
                 }
             ) from e
     
-    def _process_results(self, step_results: List[Dict[str, Any]], task: Task) -> Dict[str, Any]:
+    def _process_results(self, step_results: List[Dict[str, Any]], task: Task, final_data: Any = None) -> Dict[str, Any]:
         """Process step results into final output."""
         try:
             successful_steps = [r for r in step_results if r.get("success")]
             failed_steps = [r for r in step_results if not r.get("success")]
             
             if not failed_steps:
+                # Use final_data if provided, otherwise use last step's output
+                if final_data is not None:
+                    final_output = final_data
+                elif step_results:
+                    final_output = step_results[-1]["output"]
+                else:
+                    final_output = None
+                
                 return {
                     "success": True,
                     "output": {
                         "steps_completed": len(step_results),
                         "successful_steps": len(successful_steps),
-                        "final_output": step_results[-1]["output"] if step_results else None,
+                        "final_output": final_output,
                         "total_execution_time": sum(r.get("execution_time_ms", 0) for r in step_results),
                     }
                 }

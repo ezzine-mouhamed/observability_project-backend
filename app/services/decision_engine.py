@@ -3,9 +3,12 @@ from typing import Any, Dict
 
 from pydantic_core import ValidationError
 from app.exceptions.base import AppException
-from app.observability.agent_observer import AgentObserver, ObservationType
+from app.models.task import Task
+from app.observability.agent_observer import AgentObserver
 from app.observability.tracer import Tracer
-from app.utils import logger
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 class DecisionEngine:
     def __init__(self):
@@ -205,7 +208,7 @@ class DecisionEngine:
         else:
             return 0.6  # Lower confidence for unknown types
 
-    def evaluate_condition(self, condition: str, context: Dict[str, Any]) -> bool:
+    def evaluate_condition(self, condition: str, task: Task, context: Dict[str, Any]) -> bool:
         """Evaluate a condition in the given context."""
         start_time = datetime.now(timezone.utc)
         
@@ -255,7 +258,10 @@ class DecisionEngine:
                     "evaluation_time": evaluation_time,
                 })
                 
-                return result
+                return {
+                    "result": result,
+                    "content": task.input_data,  # Echo back input data for context, ensures data flow is traceable
+                }
                 
             except (AppException, ValidationError):
                 # Re-raise our custom exceptions
@@ -299,12 +305,22 @@ class DecisionEngine:
                     "original_exception_type": type(e).__name__,
                 }
             ) from e
-    
+
     def _get_simple_plan(
         self, task_type: str, parameters: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Get simple execution plan."""
         try:
+            # Build task-specific prompt
+            if task_type == "summarize":
+                max_length = parameters.get('max_length', 100)
+                prompt = f"Summarize in about {max_length} words:"
+            elif task_type == "translate":
+                target_lang = parameters.get('target_language', 'English')
+                prompt = f"Translate to {target_lang}:"
+            else:
+                prompt = f"Perform {task_type} on the input"
+                
             return {
                 "id": f"simple_{task_type}_{datetime.now(timezone.utc).timestamp()}",
                 "complexity": "simple",
@@ -314,7 +330,7 @@ class DecisionEngine:
                         "name": f"{task_type}_execution",
                         "type": "llm_call",
                         "parameters": {
-                            "prompt": f"Perform {task_type} on the input",
+                            "prompt": prompt,  # Use the specific prompt
                             "llm_params": {"temperature": 0.1, "max_tokens": 500},
                         },
                     }
@@ -330,12 +346,26 @@ class DecisionEngine:
                     "plan_type": "simple",
                 }
             ) from e
-    
+
     def _get_moderate_plan(
         self, task_type: str, parameters: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Get moderate execution plan."""
         try:
+            # Build task-specific prompt
+            if task_type == "summarize":
+                max_length = parameters.get('max_length', 100)
+                format_type = parameters.get('format', 'concise')
+                prompt = f"Please provide a {format_type} summary of the text in about {max_length} words or less."
+            elif task_type == "classify":
+                categories = parameters.get('categories', [])
+                if categories:
+                    prompt = f"Categorize the input into one of these categories: {', '.join(categories)}"
+                else:
+                    prompt = "Classify the input into appropriate categories"
+            else:
+                prompt = f"Process and {task_type} the input"
+            
             return {
                 "id": f"moderate_{task_type}_{datetime.now(timezone.utc).timestamp()}",
                 "complexity": "moderate",
@@ -350,14 +380,14 @@ class DecisionEngine:
                         "name": f"{task_type}_processing",
                         "type": "llm_call",
                         "parameters": {
-                            "prompt": f"Analyze and {task_type} the input",
+                            "prompt": prompt,  # Use the specific prompt
                             "llm_params": {"temperature": 0.3, "max_tokens": 1000},
                         },
                     },
                     {
                         "name": "result_formatting",
                         "type": "data_transform",
-                        "parameters": {"transform": "extract_key_points"},
+                        "parameters": {"transform": "summarize"},
                     },
                 ],
             }
@@ -371,12 +401,20 @@ class DecisionEngine:
                     "plan_type": "moderate",
                 }
             ) from e
-    
+
     def _get_complex_plan(
         self, task_type: str, parameters: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Get complex execution plan."""
         try:
+            # Build task-specific prompts
+            if task_type == "analyze":
+                prompt1 = "Perform initial analysis of the input, identifying key themes and structure"
+                prompt2 = "Provide detailed analysis with critical insights and recommendations"
+            else:
+                prompt1 = "Perform initial analysis of the input"
+                prompt2 = f"Perform detailed {task_type} with critical analysis"
+            
             return {
                 "id": f"complex_{task_type}_{datetime.now(timezone.utc).timestamp()}",
                 "complexity": "complex",
@@ -399,7 +437,7 @@ class DecisionEngine:
                         "name": "initial_analysis",
                         "type": "llm_call",
                         "parameters": {
-                            "prompt": "Perform initial analysis of the input",
+                            "prompt": prompt1,
                             "llm_params": {"temperature": 0.2, "max_tokens": 500},
                         },
                     },
@@ -407,7 +445,7 @@ class DecisionEngine:
                         "name": "detailed_processing",
                         "type": "llm_call",
                         "parameters": {
-                            "prompt": f"Perform detailed {task_type} with critical analysis",
+                            "prompt": prompt2,
                             "llm_params": {"temperature": 0.5, "max_tokens": 2000},
                         },
                     },
@@ -428,7 +466,7 @@ class DecisionEngine:
                     "plan_type": "complex",
                 }
             ) from e
-    
+
     def _evaluate_condition_logic(self, condition: str, context: Dict[str, Any]) -> bool:
         """Internal logic for condition evaluation."""
         try:
@@ -473,7 +511,7 @@ class DecisionEngine:
                     "original_exception_type": type(e).__name__,
                 }
             ) from e
-    
+
     def _validate_plan(self, plan: Dict[str, Any], task_type: str, parameters: Dict[str, Any]) -> None:
         """Validate the generated execution plan."""
         try:
@@ -549,3 +587,28 @@ class DecisionEngine:
                     "original_exception_type": type(e).__name__,
                 }
             ) from e
+    
+    def _summarize_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a safe summary of context for logging."""
+        try:
+            if not context:
+                return {"empty": True}
+            
+            if isinstance(context, dict):
+                return {
+                    "key_count": len(context),
+                    "keys": list(context.keys())[:5],  # First 5 keys only
+                    "has_nested": any(isinstance(v, (dict, list)) for v in context.values()),
+                }
+            elif isinstance(context, list):
+                return {
+                    "item_count": len(context),
+                    "first_item_type": type(context[0]).__name__ if context else None,
+                }
+            else:
+                return {
+                    "type": type(context).__name__,
+                    "string_length": len(str(context)),
+                }
+        except Exception:
+            return {"summary_error": True}
