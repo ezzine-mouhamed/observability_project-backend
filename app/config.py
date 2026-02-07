@@ -12,7 +12,7 @@ class Config:
     METRICS_ENABLED = True
     LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
-    DEFAULT_TASK_TIMEOUT = 30
+    DEFAULT_TASK_TIMEOUT = 60
     MAX_RETRY_ATTEMPTS = 3
     LLM_TIMEOUT_SECONDS = 10
 

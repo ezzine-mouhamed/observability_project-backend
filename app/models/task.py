@@ -72,6 +72,18 @@ class Task(db.Model):
         self.error_message = error
 
         if self.started_at and self.completed_at:
+            # Ensure both are timezone-aware for subtraction
+            started_at = self.started_at
+            completed_at = self.completed_at
+            
+            # If started_at is naive, make it aware
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
+            
+            # If completed_at is naive, make it aware  
+            if completed_at.tzinfo is None:
+                completed_at = completed_at.replace(tzinfo=timezone.utc)
+            
             self.execution_time_ms = int(
-                (self.completed_at - self.started_at).total_seconds() * 1000
+                (completed_at - started_at).total_seconds() * 1000
             )

@@ -57,11 +57,6 @@ logs/
 # Ollama models (large files)
 ollama_models/
 
-# Docker
-Dockerfile
-docker-compose.yml
-.dockerignore
-
 # Environment variables
 .env
 .env.local
@@ -79,3 +74,17 @@ temp/
 instance/
 .webassets-cache
 .static/
+
+# Deployment files
+deploy/.env
+
+# Docker volumes
+ollama_data/
+postgres_data/
+redis_data/
+pgadmin_data/
+
+# Local development
+.ruff_cache/
+*.pyc
+ruff.toml

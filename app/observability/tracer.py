@@ -232,10 +232,15 @@ class Tracer:
         """Determine if a trace should be persisted to database."""
         important_operations = ["task_execution", "llm_call", "decision_point"]
         return operation in important_operations
-    
+
     def _persist_trace(self, trace_data: Dict[str, Any]) -> None:
         """Persist trace to database."""
         try:
+            # Ensure end_time is timezone-aware
+            end_time = trace_data.get("end_time")
+            if end_time and end_time.tzinfo is None:
+                end_time = end_time.replace(tzinfo=timezone.utc)
+                
             trace = ExecutionTrace(
                 trace_id=trace_data["trace_id"],
                 parent_trace_id=trace_data.get("parent_trace_id"),
@@ -245,7 +250,7 @@ class Tracer:
                 events=trace_data.get("events", []),
                 error=trace_data.get("error"),
                 start_time=trace_data["start_time"],
-                end_time=trace_data.get("end_time"),
+                end_time=end_time,
                 duration_ms=trace_data.get("duration_ms", 0),
                 success=trace_data.get("success", True),
             )

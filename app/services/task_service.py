@@ -33,10 +33,11 @@ class TaskService:
         self.llm_client = LLMClient()
         self.tracer = Tracer()
         self.metrics = MetricsCollector()
-    
+
     def execute_task(self, task_data: TaskCreate) -> TaskResult:
         """Execute a task with full observability."""
         start_time = time.time()
+        task = None
         
         try:
             # Validate task data
@@ -103,8 +104,14 @@ class TaskService:
                 extra={"task_type": task_data.task_type, **e.extra},
             )
             
-            # Create or update failed task record
-            task = self._handle_task_failure(task_data, start_time, e)
+            # Update existing task if it exists, otherwise create new
+            if task:
+                # UPDATE EXISTING TASK instead of creating new one
+                task = self._update_task_to_failed(task, start_time, e)
+            else:
+                # Only create new task if one doesn't exist
+                task = self._handle_task_failure(task_data, start_time, e)
+                
             return TaskResult(task=task, success=False, traces=self.tracer.get_current_traces())
             
         except Exception as e:
@@ -129,10 +136,58 @@ class TaskService:
                 }
             )
             
-            # Create or update failed task record
-            task = self._handle_task_failure(task_data, start_time, wrapped_exception)
+            # Update existing task if it exists, otherwise create new
+            if task:
+                task = self._update_task_to_failed(task, start_time, wrapped_exception)
+            else:
+                task = self._handle_task_failure(task_data, start_time, wrapped_exception)
+                
             return TaskResult(task=task, success=False, traces=self.tracer.get_current_traces())
-    
+
+    def _update_task_to_failed(self, task: Task, start_time: float, exception: Exception) -> Task:
+        """Update an existing task to failed status."""
+        try:
+            execution_time = int((time.time() - start_time) * 1000)
+            
+            # Mark as failed
+            task.status = "failed"
+            task.error_message = str(exception)
+            task.completed_at = datetime.now(timezone.utc)
+            
+            # Calculate execution time
+            if task.started_at:
+                if task.started_at.tzinfo is None:
+                    task.started_at = task.started_at.replace(tzinfo=timezone.utc)
+                if task.completed_at.tzinfo is None:
+                    task.completed_at = task.completed_at.replace(tzinfo=timezone.utc)
+                
+                task.execution_time_ms = int(
+                    (task.completed_at - task.started_at).total_seconds() * 1000
+                )
+            else:
+                task.execution_time_ms = execution_time
+            
+            # Save the updated task
+            self.task_repo.save(task)
+            
+            logger.info("Task updated to failed", extra={
+                "task_id": task.id,
+                "execution_time_ms": task.execution_time_ms,
+            })
+            
+            return task
+            
+        except Exception as e:
+            logger.error(
+                f"Failed to update task to failed state: {str(e)}",
+                extra={
+                    "task_id": task.id if task else None,
+                    "update_error": True,
+                },
+                exc_info=True,
+            )
+            return task
+
     def _validate_task_data(self, task_data: TaskCreate) -> None:
         """Validate task creation data."""
         if not task_data.task_type:
