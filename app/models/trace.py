@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-import statistics
 from typing import Any, Dict, Optional
 
 from sqlalchemy import JSON, Float, Integer, String, DateTime, Boolean, ForeignKey
@@ -68,40 +67,21 @@ class ExecutionTrace(db.Model):
             "complexity_score": self.complexity_score,
             "efficiency_score": self.efficiency_score,
         }
-    
+
     def calculate_performance_score(self) -> float:
-        """Calculate a performance score based on various metrics."""
+        """Calculate and set performance score."""
         scores = []
         
-        # Success factor
-        scores.append(1.0 if self.success else 0.0)
+        if self.success:
+            scores.append(1.0)
         
-        # Duration factor (inverse - faster is better)
         if self.duration_ms:
-            # Normalize duration (0-10000ms maps to 1.0-0.0)
+            # Normalize: 0-10 seconds = 1.0-0.0
             duration_score = max(0.0, 1.0 - (self.duration_ms / 10000))
             scores.append(duration_score)
         
-        # Quality factor
         if self.quality_metrics and "quality_score" in self.quality_metrics:
             scores.append(self.quality_metrics["quality_score"])
         
-        # Decision quality factor
-        if self.decisions:
-            decision_qualities = []
-            for decision in self.decisions:
-                if isinstance(decision, dict) and "quality" in decision:
-                    quality = decision["quality"]
-                    if isinstance(quality, dict) and "overall_score" in quality:
-                        decision_qualities.append(quality["overall_score"])
-            
-            if decision_qualities:
-                scores.append(statistics.mean(decision_qualities))
-        
-        # Calculate average if we have scores
-        if scores:
-            self.performance_score = sum(scores) / len(scores)
-        else:
-            self.performance_score = 0.5  # Default
-        
+        self.performance_score = sum(scores) / len(scores) if scores else 0.5
         return self.performance_score

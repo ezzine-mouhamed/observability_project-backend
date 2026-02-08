@@ -70,6 +70,10 @@ class TaskService:
                     output=result.get("output"),
                     error=result.get("error")
                 )
+
+                # Calculate quality score using existing Task method
+                task.calculate_quality_score(result["success"])
+
                 self.task_repo.save(task)
 
                 logger.info(
@@ -157,6 +161,9 @@ class TaskService:
                 )
             else:
                 task.execution_time_ms = execution_time
+            
+            # Calculate quality score for failed task
+            task.calculate_quality_score(False)  # False because task failed
             
             # Save the updated task
             self.task_repo.save(task)
@@ -250,6 +257,9 @@ class TaskService:
                 execution_time_ms=execution_time,
             )
             
+            # Calculate quality score for failed task
+            task.calculate_quality_score(False)  # False because task failed
+            
             self.task_repo.save(task)
             return task
             
@@ -282,6 +292,10 @@ class TaskService:
                 task.task_type, 
                 task.parameters
             )
+            
+            # Set complexity level and agent involved from execution plan
+            task.complexity_level = execution_plan.get("complexity", "simple")
+            task.agent_involved = execution_plan.get("agent", "decision_engine")
             
             self.tracer.record_decision(
                 "execution_plan_selected",
@@ -337,7 +351,12 @@ class TaskService:
                     break
             
             # Process final results
-            return self._process_results(step_results, task, current_data)
+            result = self._process_results(step_results, task, current_data)
+            
+            # Record performance metrics using existing Task method
+            self._record_step_performance_metrics(task, step_results, result)
+            
+            return result
             
         except (AppException, ValidationError):
             # Re-raise our custom exceptions
@@ -354,7 +373,48 @@ class TaskService:
                     "original_exception": str(e),
                 }
             ) from e
-    
+
+    def _record_step_performance_metrics(self, task: Task, step_results: List[Dict[str, Any]], result: Dict[str, Any]) -> None:
+        """Record performance metrics from step execution using Task.record_performance_metric()."""
+        try:
+            # Record step-level metrics
+            for step_result in step_results:
+                step_name = step_result.get("step_name", f"step_{step_results.index(step_result)}")
+                execution_time = step_result.get("execution_time_ms", 0)
+                
+                task.record_performance_metric(
+                    f"{step_name}_execution_time_ms",
+                    execution_time
+                )
+            
+            # Record totals
+            total_time = sum(r.get("execution_time_ms", 0) for r in step_results)
+            successful_steps = sum(1 for r in step_results if r.get("success"))
+            
+            task.record_performance_metric("total_execution_time_ms", total_time)
+            task.record_performance_metric("successful_steps_count", successful_steps)
+            task.record_performance_metric("total_steps_count", len(step_results))
+            
+            # Record success rate
+            success_rate = successful_steps / len(step_results) if step_results else 0.0
+            task.record_performance_metric("step_success_rate", success_rate)
+            
+            # Record result metrics if available
+            if result.get("success") and result.get("output"):
+                output = result["output"]
+                if isinstance(output, dict) and "final_output" in output:
+                    final_output = output["final_output"]
+                    if isinstance(final_output, str):
+                        task.record_performance_metric("final_output_length", len(final_output))
+                        task.record_performance_metric("final_output_word_count", len(final_output.split()))
+            
+        except Exception as e:
+            logger.error(
+                f"Failed to record performance metrics: {str(e)}",
+                extra={"task_id": task.id},
+                exc_info=True,
+            )
+
     def _validate_execution_plan(self, execution_plan: Dict[str, Any], task: Task) -> None:
         """Validate the execution plan before execution."""
         if not execution_plan.get("steps"):
@@ -514,15 +574,49 @@ class TaskService:
                 "condition": condition,
             })
             
-            return self.decision_engine.evaluate_condition(
+            result = self.decision_engine.evaluate_condition(
                 condition,
                 task,
                 data  # Use the provided data
             )
             
-        except (AppException, ValidationError):
+            # Record validation using existing Task method
+            task.record_validation(
+                check_name=condition,
+                passed=result["result"],
+                details={
+                    "context": result.get("content", {}),
+                    "condition": condition,
+                    "step_name": step["name"]
+                }
+            )
+            
+            return result["content"]
+            
+        except (AppException, ValidationError) as e:
+            # Record failed validation
+            task.record_validation(
+                check_name=condition,
+                passed=False,
+                details={
+                    "error": e.message,
+                    "condition": condition,
+                    "step_name": step["name"]
+                }
+            )
             raise  # Re-raise DecisionEngine exceptions
+            
         except Exception as e:
+            # Record failed validation
+            task.record_validation(
+                check_name=condition,
+                passed=False,
+                details={
+                    "error": str(e),
+                    "condition": condition,
+                    "step_name": step["name"]
+                }
+            )
             raise AppException(
                 message=f"Decision point evaluation failed: {str(e)}",
                 extra={

@@ -98,6 +98,7 @@ class DecisionEngine:
                             "complexity": complexity,
                         }
                     )
+                plan["agent"] = "decision_engine"  # Add agent field for traceability
                 
                 # Record plan selection rationale
                 self.tracer.increment_agent_step()
@@ -324,6 +325,7 @@ class DecisionEngine:
             return {
                 "id": f"simple_{task_type}_{datetime.now(timezone.utc).timestamp()}",
                 "complexity": "simple",
+                "agent": "decision_engine",
                 "reason": "Task assessed as low complexity",
                 "steps": [
                     {
@@ -369,6 +371,7 @@ class DecisionEngine:
             return {
                 "id": f"moderate_{task_type}_{datetime.now(timezone.utc).timestamp()}",
                 "complexity": "moderate",
+                "agent": "decision_engine",
                 "reason": "Task requires validation and processing",
                 "steps": [
                     {
@@ -418,6 +421,7 @@ class DecisionEngine:
             return {
                 "id": f"complex_{task_type}_{datetime.now(timezone.utc).timestamp()}",
                 "complexity": "complex",
+                "agent": "decision_engine",
                 "reason": "Task requires multi-stage processing and validation",
                 "steps": [
                     {

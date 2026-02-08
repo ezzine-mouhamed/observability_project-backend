@@ -97,37 +97,43 @@ class Task(db.Model):
                 (completed_at - started_at).total_seconds() * 1000
             )
     
-    def calculate_quality_score(self) -> Optional[float]:
+    def calculate_quality_score(self, success: bool) -> Optional[float]:
         """
-        Calculate quality score based on traces and validation results.
+        Calculate quality score based on validation results and performance.
         
+        Args:
+            success: Whether the task execution was successful
+            
         Returns:
             Quality score between 0.0 and 1.0
         """
-        if not self.traces:
-            return None
+        scores = []
         
-        # Calculate from trace quality metrics
-        trace_quality_scores = []
-        for trace in self.traces:
-            if trace.quality_metrics and "quality_score" in trace.quality_metrics:
-                trace_quality_scores.append(trace.quality_metrics["quality_score"])
+        # 1. Score from validation results
+        if self.validation_results and self.validation_results.get("total", 0) > 0:
+            validation_score = self.validation_results.get("score", 0.0)
+            scores.append(validation_score)
         
-        if trace_quality_scores:
-            # Also consider validation results
-            validation_score = 1.0
-            if self.validation_results:
-                # Example: check if all validations passed
-                passed = self.validation_results.get("passed", 0)
-                total = self.validation_results.get("total", 0)
-                validation_score = passed / total if total > 0 else 1.0
-            
-            # Weighted average
-            trace_avg = sum(trace_quality_scores) / len(trace_quality_scores)
-            self.quality_score = (trace_avg * 0.7) + (validation_score * 0.3)
+        # 2. Score from execution success
+        if success:
+            scores.append(1.0)
+        else:
+            scores.append(0.0)
         
-        return self.quality_score
-    
+        # 3. Score from performance (if metrics exist)
+        if self.performance_metrics:
+            # Simple heuristic: faster execution = better quality
+            exec_time = self.performance_metrics.get("total_execution_time_ms", {}).get("value", 0)
+            if exec_time > 0:
+                time_score = max(0.0, 1.0 - (exec_time / 60000))  # 60 seconds max
+                scores.append(time_score * 0.2)  # Weighted lower
+        
+        if scores:
+            self.quality_score = sum(scores) / len(scores)
+            return self.quality_score
+        
+        return None
+
     def record_validation(self, check_name: str, passed: bool, details: Optional[Dict] = None) -> None:
         """Record a validation result."""
         if not self.validation_results:
@@ -164,4 +170,27 @@ class Task(db.Model):
         self.performance_metrics[metric_name] = {
             "value": value,
             "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def get_observability_summary(self) -> Dict[str, Any]:
+        """Get comprehensive observability summary."""
+        return {
+            "quality": {
+                "score": self.quality_score,
+                "validation_results": self.validation_results or {},
+                "trace_count": len(self.traces),
+            },
+            "performance": {
+                "metrics": self.performance_metrics or {},
+                "execution_time_ms": self.execution_time_ms,
+            },
+            "complexity": {
+                "level": self.complexity_level,
+                "agent": self.agent_involved,
+            },
+            "execution": {
+                "status": self.status,
+                "success": self.status == "completed",
+                "error": self.error_message,
+            }
         }
