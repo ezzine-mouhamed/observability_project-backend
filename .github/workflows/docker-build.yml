@@ -1,7 +1,7 @@
-name: Build and Push Docker Image
+name: Build and Push Backend Docker Image
 
 on:
-  workflow_dispatch:  # ONLY manual trigger
+  workflow_dispatch:
     inputs:
       version:
         description: 'Version tag (e.g., v1.0.0)'
@@ -30,14 +30,17 @@ jobs:
         with:
           images: ${{ secrets.DOCKER_USERNAME }}/observability-backend
           tags: |
-            type=raw,value=latest,enable=${{ github.event.inputs.version == '' }}
             type=raw,value=${{ github.event.inputs.version }},enable=${{ github.event.inputs.version != '' }}
+            type=raw,value=latest,enable=${{ github.event.inputs.version == '' }}
             type=sha,format=short
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: deploy/Dockerfile # <-- Points to Dockerfile in deploy folder
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
