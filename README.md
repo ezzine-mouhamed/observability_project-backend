@@ -1,9 +1,14 @@
 # Agent Observability Platform
 
-A backend service for AI task execution with built-in execution tracing using Ollama for local LLM inference.
+A full-stack platform for AI task execution with built-in tracing and observability.
 
-The platform records hierarchical execution traces (with spans, decisions, errors, and logs) in PostgreSQL.  
-All observability data is stored as traces in the database.
+- **Backend**: Flask API with Ollama integration
+- **Frontend**: Next.js dashboard for monitoring
+- **Infrastructure**: Docker Compose deployment
+
+[Backend Repository](https://github.com/ezzine-mouhamed/observability_project-backend)
+[Frontend Repository](https://github.com/ezzine-mouhamed/observability_project-frontend)
+[Infrastructure Repository](https://github.com/ezzine-mouhamed/observability_project-infra)
 
 ---
 
@@ -24,11 +29,13 @@ All observability data is stored as traces in the database.
 **Services (Docker Compose):**
 
 - `app` – Flask backend API
+- `frontend` – Next.js dashboard
 - `postgres` – Main database (stores traces)
 - `ollama` – Local LLM runtime
-- `pgadmin` – Database UI
+- `pgadmin` – Database UI (optional)
+- `nginx` – Reverse proxy (production)
 
-All execution traces are stored in PostgreSQL.  
+All execution traces are stored in PostgreSQL, with real-time visualization in the dashboard.  
 
 ---
 
