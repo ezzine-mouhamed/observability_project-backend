@@ -1,4 +1,5 @@
 from flask import Flask
+from flask_cors import CORS
 
 from app.config import Config
 from app.extensions import db, migrate
@@ -19,6 +20,18 @@ def create_app(config_class=Config):
     
     # Setup logging
     setup_logging()
+    
+    CORS(app, resources={
+        r"/api/*": {
+            "origins": [
+                "http://localhost:3000"
+            ],
+            "allow_headers": ["Content-Type", "Authorization"],
+            "expose_headers": ["Content-Type"],
+            "methods": ["GET", "POST", "PUT", "DELETE"],
+            "supports_credentials": True
+        }
+    })
     
     # Register blueprints
     app.register_blueprint(task_bp)
