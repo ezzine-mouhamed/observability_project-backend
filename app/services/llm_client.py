@@ -1,12 +1,12 @@
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from app.config import Config
-from app.exceptions.base import AppException  # Import AppException
+from app.exceptions.base import AppException
 from app.observability.tracer import Tracer
 from app.utils.logger import get_logger
 
@@ -14,27 +14,26 @@ logger = get_logger(__name__)
 
 
 class LLMClient:
-    def __init__(self):
-        self.tracer = Tracer()
+    def __init__(self, tracer: Optional[Tracer] = None):
+        self.tracer = tracer or Tracer()
         self.config = Config()
         self.session = self._create_retry_session()
         self.request_timeout = self.config.OLLAMA_REQUEST_TIMEOUT
 
     def _create_retry_session(self) -> requests.Session:
-        """Create a session with retry strategy for resilience"""
         session = requests.Session()
 
         retry_strategy = Retry(
-            total=3,  # Maximum number of retries
-            backoff_factor=1,  # Exponential backoff: 1, 2, 4 seconds
-            status_forcelist=[429, 500, 502, 503, 504],  # Retry on these status codes
-            allowed_methods=["GET", "POST"],  # Only retry safe methods
-            raise_on_status=False,  # Don't raise exception, just retry
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET", "POST"],
+            raise_on_status=False,
         )
 
         adapter = HTTPAdapter(
             max_retries=retry_strategy,
-            pool_connections=10,  # Connection pool size
+            pool_connections=10,
             pool_maxsize=20,
         )
 
@@ -44,19 +43,25 @@ class LLMClient:
         return session
 
     def process(self, prompt: str, input_data: Any, **kwargs) -> Dict[str, Any]:
-        """Process LLM request with comprehensive observability"""
         start_time = time.time()
+
+        model = kwargs.get("model", self.config.OLLAMA_DEFAULT_MODEL)
+        
+        trace_context = {
+            "prompt_type": prompt,
+            "model": model,
+            "input_size": len(str(input_data)),
+        }
+        
+        current_trace = self.tracer.context.current
+        if current_trace and "task_id" in current_trace.get("context", {}):
+            trace_context["task_id"] = current_trace["context"]["task_id"]
 
         with self.tracer.start_trace(
             "llm_call",
-            {
-                "prompt_type": prompt,
-                "model": kwargs.get("model"),
-                "input_size": len(str(input_data)),
-            },
+            trace_context,
         ):
             try:
-                # Validate prompt before sending
                 validation = self.validate_prompt(prompt)
                 if not validation["is_valid"]:
                     raise AppException(
@@ -67,33 +72,29 @@ class LLMClient:
                         }
                     )
 
-                # Make the LLM call
+                kwargs["model"] = model
                 result = self._ollama_call(prompt, input_data, **kwargs)
 
                 latency_ms = int((time.time() - start_time) * 1000)
 
-                # Record success event
                 self.tracer.record_event(
                     "llm_call_completed",
                     {
-                        "prompt_hash": hash(prompt) % 10000,  # Hash for privacy
+                        "prompt_hash": hash(prompt) % 10000,
                         "response_length": len(str(result.get("content", ""))),
                         "processing_time_ms": latency_ms,
                         "tokens_used": result.get("tokens_used", 0),
+                        "model": model,
                         "success": True,
                     },
                 )
 
-                # Log for observability
-                logger.info(
-                    "LLM call completed",
-                    extra={
-                        "model": kwargs.get("model", self.config.OLLAMA_DEFAULT_MODEL),
-                        "latency_ms": latency_ms,
-                        "tokens_used": result.get("tokens_used", 0),
-                        "success": True,
-                    },
-                )
+                logger.info("LLM call completed", extra={
+                    "model": model,
+                    "latency_ms": latency_ms,
+                    "tokens_used": result.get("tokens_used", 0),
+                    "success": True,
+                })
 
                 return result
 
@@ -132,7 +133,6 @@ class LLMClient:
                 )
 
             except AppException:
-                # Re-raise AppException without wrapping
                 raise
 
             except Exception as e:
@@ -143,14 +143,14 @@ class LLMClient:
                     {
                         "prompt_preview": prompt[:100],
                         "error_type": type(e).__name__,
-                        "model": kwargs.get("model"),
+                        "model": model,
                     },
                 )
                 logger.error(
                     "LLM call failed",
                     extra={
                         "error": str(e),
-                        "model": kwargs.get("model"),
+                        "model": model,
                         "processing_time_ms": int((time.time() - start_time) * 1000),
                     },
                 )
@@ -159,19 +159,16 @@ class LLMClient:
                     extra={
                         "error_type": type(e).__name__,
                         "prompt_preview": prompt[:100],
-                        "model": kwargs.get("model"),
+                        "model": model,
                         "original_exception": str(e),
                     }
                 )
 
     def _ollama_call(self, prompt: str, input_data: Any, **kwargs) -> Dict[str, Any]:
-        """Make actual call to Ollama API with proper error handling"""
         model = kwargs.get("model", self.config.OLLAMA_DEFAULT_MODEL)
 
-        # Construct the prompt with context
         full_prompt = self._construct_prompt(prompt, input_data)
 
-        # Prepare request payload
         payload = {
             "model": model,
             "prompt": full_prompt,
@@ -185,7 +182,6 @@ class LLMClient:
             },
         }
 
-        # Make the request
         try:
             response = self.session.post(
                 f"{self.config.OLLAMA_BASE_URL}/api/generate",
@@ -196,7 +192,7 @@ class LLMClient:
                 ),
             )
 
-            response.raise_for_status()  # Raise exception for bad status codes
+            response.raise_for_status()
 
             result = response.json()
 
@@ -207,7 +203,7 @@ class LLMClient:
                 + result.get("prompt_eval_count", 0),
                 "latency_ms": int(
                     result.get("total_duration", 0) / 1000000
-                ),  # Convert nanoseconds to ms
+                ),
                 "raw_response": result,
             }
 
@@ -250,7 +246,6 @@ class LLMClient:
             )
 
     def _construct_prompt(self, prompt: str, input_data: Any) -> str:
-        """Construct the full prompt with context and instructions"""
         if isinstance(input_data, dict):
             input_str = str(input_data)
         elif isinstance(input_data, str):
@@ -264,6 +259,7 @@ Context:
 - Task requires full observability and traceability
 - All decisions and reasoning must be recorded
 - Provide structured, actionable responses
+- Only respond with the final answer. Do not include any explanations or reasoning in the response.
 
 Task input:
 {input_str}
@@ -275,7 +271,6 @@ Important: Include reasoning in your response for observability purposes.
 """.strip()
 
     def validate_prompt(self, prompt: str) -> Dict[str, Any]:
-        """Validate prompt for safety and quality"""
         validation_result = {
             "is_valid": True,
             "warnings": [],
@@ -283,12 +278,10 @@ Important: Include reasoning in your response for observability purposes.
             "prompt_length": len(prompt),
         }
 
-        # Basic validation
         if not prompt or len(prompt.strip()) == 0:
             validation_result["is_valid"] = False
             validation_result["rejection_reason"] = "Empty prompt"
 
-        # Length validation
         if len(prompt) > 10000:
             validation_result["warnings"].append(
                 "Prompt exceeds recommended length (10,000 chars)"
@@ -299,7 +292,6 @@ Important: Include reasoning in your response for observability purposes.
                 "Prompt is very short, may be insufficient"
             )
 
-        # Safety checks
         blocked_terms = [
             "harmful",
             "dangerous",
@@ -319,13 +311,11 @@ Important: Include reasoning in your response for observability purposes.
                 f"Prompt contains concerning terms: {found_terms}"
             )
 
-        # Record validation for observability
         self.tracer.record_event("prompt_validated", validation_result)
 
         return validation_result
 
     def get_available_models(self) -> list:
-        """Get list of available models from Ollama"""
         try:
             response = self.session.get(
                 f"{self.config.OLLAMA_BASE_URL}/api/tags", timeout=5

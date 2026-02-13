@@ -33,10 +33,6 @@ class ExecutionTrace(db.Model):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
-    # Performance and quality indicators
-    performance_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    complexity_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    efficiency_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     task = relationship("Task", back_populates="traces")
 
@@ -63,25 +59,4 @@ class ExecutionTrace(db.Model):
             "duration_ms": self.duration_ms,
             "success": self.success,
             "created_at": self.created_at.isoformat(),
-            "performance_score": self.performance_score,
-            "complexity_score": self.complexity_score,
-            "efficiency_score": self.efficiency_score,
         }
-
-    def calculate_performance_score(self) -> float:
-        """Calculate and set performance score."""
-        scores = []
-        
-        if self.success:
-            scores.append(1.0)
-        
-        if self.duration_ms:
-            # Normalize: 0-10 seconds = 1.0-0.0
-            duration_score = max(0.0, 1.0 - (self.duration_ms / 10000))
-            scores.append(duration_score)
-        
-        if self.quality_metrics and "quality_score" in self.quality_metrics:
-            scores.append(self.quality_metrics["quality_score"])
-        
-        self.performance_score = sum(scores) / len(scores) if scores else 0.5
-        return self.performance_score

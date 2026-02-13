@@ -75,6 +75,7 @@ class TaskResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
+    quality_score: Optional[float]
 
     model_config = ConfigDict(from_attributes=True)
 

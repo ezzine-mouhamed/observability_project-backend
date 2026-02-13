@@ -3,7 +3,7 @@ Metrics Calculator - Calculates agentic metrics from traces and observations.
 """
 import statistics
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from collections import defaultdict
 
 from app.models.trace import ExecutionTrace
@@ -14,90 +14,60 @@ logger = get_logger(__name__)
 
 
 class MetricsCalculator:
-    """Calculates various metrics from agent traces and observations."""
-    
     def __init__(self, trace_repository: Optional[TraceRepository] = None):
         self.trace_repo = trace_repository or TraceRepository()
-        self._cache: Dict[str, Tuple[datetime, Any]] = {}
-        self._cache_ttl = timedelta(minutes=5)
     
     def calculate_agent_performance(
         self,
         agent_name: Optional[str] = None,
         time_window_hours: int = 24
     ) -> Dict[str, Any]:
-        """
-        Calculate performance metrics for agents.
-        
-        Args:
-            agent_name: Specific agent name, or None for all agents
-            time_window_hours: Time window for analysis
-            
-        Returns:
-            Performance metrics
-        """
-        cache_key = f"agent_performance_{agent_name}_{time_window_hours}"
-        cached_result = self._get_cached(cache_key)
-        if cached_result:
-            return cached_result
-        
-        # Get relevant traces
         traces = self._get_traces_for_period(time_window_hours)
         
         if not traces:
-            result = {
+            return {
                 "agent_name": agent_name,
                 "total_traces": 0,
                 "no_data": True,
                 "calculated_at": datetime.now(timezone.utc).isoformat(),
             }
-            self._cache_result(cache_key, result)
-            return result
         
-        # Filter by agent if specified
         if agent_name:
             traces = [
                 t for t in traces 
                 if t.agent_context and t.agent_context.get("agent_id") == agent_name
             ]
         
-        # Calculate metrics
         total_traces = len(traces)
         successful_traces = [t for t in traces if t.success]
         failed_traces = [t for t in traces if not t.success]
         
-        # Success rate
         success_rate = len(successful_traces) / total_traces if total_traces > 0 else 0.0
         
-        # Average quality score
         quality_scores = []
         for trace in traces:
-            if trace.quality_metrics and "quality_score" in trace.quality_metrics:
-                quality_scores.append(trace.quality_metrics["quality_score"])
+            if trace.quality_metrics and "composite_quality_score" in trace.quality_metrics:
+                quality_scores.append(trace.quality_metrics["composite_quality_score"])
         
         avg_quality = statistics.mean(quality_scores) if quality_scores else 0.0
         
-        # Average duration
         durations = [t.duration_ms for t in traces if t.duration_ms]
         avg_duration = statistics.mean(durations) if durations else 0.0
         
-        # Decision metrics
-        decision_counts = []
+        total_decisions = 0
         decision_qualities = []
         for trace in traces:
             if trace.decisions:
-                decision_counts.append(len(trace.decisions))
-                # Extract decision qualities
+                total_decisions += len(trace.decisions)
                 for decision in trace.decisions:
                     if isinstance(decision, dict) and "quality" in decision:
                         quality = decision["quality"]
                         if isinstance(quality, dict) and "overall_score" in quality:
                             decision_qualities.append(quality["overall_score"])
-        
-        avg_decisions_per_trace = statistics.mean(decision_counts) if decision_counts else 0.0
+
+        avg_decisions_per_trace = total_decisions / len(traces) if traces else 0.0
         avg_decision_quality = statistics.mean(decision_qualities) if decision_qualities else 0.0
         
-        # Agent observations metrics
         observation_counts = []
         for trace in traces:
             if trace.agent_observations:
@@ -105,14 +75,12 @@ class MetricsCalculator:
         
         avg_observations_per_trace = statistics.mean(observation_counts) if observation_counts else 0.0
         
-        # Error analysis
         error_types = defaultdict(int)
         for trace in failed_traces:
             if trace.error and isinstance(trace.error, dict):
                 error_type = trace.error.get("type", "unknown")
                 error_types[error_type] += 1
         
-        # Performance trends (last 3 hours vs previous 3 hours)
         current_time = datetime.now(timezone.utc)
         recent_window_start = current_time - timedelta(hours=3)
         previous_window_start = current_time - timedelta(hours=6)
@@ -123,7 +91,6 @@ class MetricsCalculator:
             if t.end_time and previous_window_start <= t.end_time < recent_window_start
         ]
         
-        # Calculate trend
         trend = "stable"
         if recent_traces and previous_traces:
             recent_success_rate = len([t for t in recent_traces if t.success]) / len(recent_traces)
@@ -154,8 +121,6 @@ class MetricsCalculator:
             ),
         }
         
-        self._cache_result(cache_key, result)
-        
         logger.info(
             f"Agent performance metrics calculated",
             extra={
@@ -171,36 +136,18 @@ class MetricsCalculator:
     def calculate_quality_metrics(
         self,
         time_window_hours: int = 24,
-        group_by: str = "operation"  # operation, agent, or hour
+        group_by: str = "operation"
     ) -> Dict[str, Any]:
-        """
-        Calculate quality metrics grouped by specified dimension.
-        
-        Args:
-            time_window_hours: Time window for analysis
-            group_by: How to group metrics (operation, agent, or hour)
-            
-        Returns:
-            Quality metrics grouped by dimension
-        """
-        cache_key = f"quality_metrics_{time_window_hours}_{group_by}"
-        cached_result = self._get_cached(cache_key)
-        if cached_result:
-            return cached_result
-        
-        traces = self._get_traces_for_period(time_window_hours)
+        traces: List[ExecutionTrace] = self._get_traces_for_period(time_window_hours)
         
         if not traces:
-            result = {
+            return {
                 "group_by": group_by,
                 "time_window_hours": time_window_hours,
                 "no_data": True,
                 "calculated_at": datetime.now(timezone.utc).isoformat(),
             }
-            self._cache_result(cache_key, result)
-            return result
         
-        # Group traces
         grouped_data = defaultdict(list)
         
         for trace in traces:
@@ -218,24 +165,20 @@ class MetricsCalculator:
             
             grouped_data[key].append(trace)
         
-        # Calculate metrics for each group
         result_groups = {}
         
         for group_key, group_traces in grouped_data.items():
-            # Extract quality scores
             quality_scores = []
             for trace in group_traces:
-                if trace.quality_metrics and "quality_score" in trace.quality_metrics:
-                    quality_scores.append(trace.quality_metrics["quality_score"])
+                if trace.quality_metrics and "composite_quality_score" in trace.quality_metrics:
+                    quality_scores.append(trace.quality_metrics["composite_quality_score"])
             
-            # Calculate statistics
             if quality_scores:
                 avg_quality = statistics.mean(quality_scores)
                 min_quality = min(quality_scores)
                 max_quality = max(quality_scores)
                 median_quality = statistics.median(quality_scores)
                 
-                # Quality distribution
                 quality_distribution = {
                     "excellent": len([s for s in quality_scores if s >= 0.9]),
                     "good": len([s for s in quality_scores if 0.8 <= s < 0.9]),
@@ -247,7 +190,6 @@ class MetricsCalculator:
                 avg_quality = min_quality = max_quality = median_quality = 0.0
                 quality_distribution = {}
             
-            # Success rate
             successful = len([t for t in group_traces if t.success])
             success_rate = successful / len(group_traces) if group_traces else 0.0
             
@@ -261,7 +203,6 @@ class MetricsCalculator:
                 "quality_distribution": quality_distribution,
             }
         
-        # Sort groups by trace count (descending)
         sorted_groups = dict(sorted(
             result_groups.items(),
             key=lambda x: x[1]["trace_count"],
@@ -277,40 +218,21 @@ class MetricsCalculator:
             "calculated_at": datetime.now(timezone.utc).isoformat(),
         }
         
-        self._cache_result(cache_key, result)
-        
         return result
     
     def calculate_decision_analytics(
         self,
         time_window_hours: int = 24
     ) -> Dict[str, Any]:
-        """
-        Analyze decision patterns and quality.
-        
-        Args:
-            time_window_hours: Time window for analysis
-            
-        Returns:
-            Decision analytics
-        """
-        cache_key = f"decision_analytics_{time_window_hours}"
-        cached_result = self._get_cached(cache_key)
-        if cached_result:
-            return cached_result
-        
         traces = self._get_traces_for_period(time_window_hours)
         
         if not traces:
-            result = {
+            return {
                 "time_window_hours": time_window_hours,
                 "no_data": True,
                 "calculated_at": datetime.now(timezone.utc).isoformat(),
             }
-            self._cache_result(cache_key, result)
-            return result
         
-        # Extract all decisions
         all_decisions = []
         decision_types = defaultdict(list)
         
@@ -324,14 +246,11 @@ class MetricsCalculator:
                         
                         all_decisions.append(decision)
                         
-                        # Group by decision type
                         decision_type = decision.get("type", "unknown")
                         decision_types[decision_type].append(decision)
         
-        # Calculate decision statistics
         total_decisions = len(all_decisions)
         
-        # Decision quality distribution
         quality_scores = []
         for decision in all_decisions:
             if "quality" in decision and isinstance(decision["quality"], dict):
@@ -341,7 +260,6 @@ class MetricsCalculator:
         
         avg_decision_quality = statistics.mean(quality_scores) if quality_scores else 0.0
         
-        # Decision type analysis
         type_analysis = {}
         for decision_type, type_decisions in decision_types.items():
             type_quality_scores = []
@@ -359,7 +277,6 @@ class MetricsCalculator:
                 "percentage": len(type_decisions) / total_decisions if total_decisions > 0 else 0.0,
             }
         
-        # Decision context analysis
         context_lengths = []
         for decision in all_decisions:
             context = decision.get("context", {})
@@ -367,7 +284,6 @@ class MetricsCalculator:
         
         avg_context_length = statistics.mean(context_lengths) if context_lengths else 0.0
         
-        # Decision success correlation
         successful_decisions = []
         failed_decisions = []
         
@@ -377,7 +293,6 @@ class MetricsCalculator:
             else:
                 failed_decisions.append(decision)
         
-        # Calculate quality difference
         successful_qualities = []
         for decision in successful_decisions:
             if "quality" in decision and isinstance(decision["quality"], dict):
@@ -422,8 +337,6 @@ class MetricsCalculator:
             "calculated_at": datetime.now(timezone.utc).isoformat(),
         }
         
-        self._cache_result(cache_key, result)
-        
         logger.info(
             "Decision analytics calculated",
             extra={
@@ -440,16 +353,6 @@ class MetricsCalculator:
         agent_name: Optional[str] = None,
         time_window_hours: int = 24
     ) -> Dict[str, Any]:
-        """
-        Identify patterns in agent behavior.
-        
-        Args:
-            agent_name: Specific agent to analyze
-            time_window_hours: Time window for analysis
-            
-        Returns:
-            Behavior patterns
-        """
         traces = self._get_traces_for_period(time_window_hours)
         
         if not traces:
@@ -459,14 +362,12 @@ class MetricsCalculator:
                 "calculated_at": datetime.now(timezone.utc).isoformat(),
             }
         
-        # Filter by agent if specified
         if agent_name:
             traces = [
                 t for t in traces 
                 if t.agent_context and t.agent_context.get("agent_id") == agent_name
             ]
         
-        # Extract behavior patterns
         operation_sequences = defaultdict(list)
         error_patterns = defaultdict(int)
         timing_patterns = defaultdict(list)
@@ -474,7 +375,6 @@ class MetricsCalculator:
         for trace in traces:
             agent_id = trace.agent_context.get("agent_id") if trace.agent_context else "unknown"
             
-            # Record operation sequence
             operation_sequences[agent_id].append({
                 "operation": trace.operation,
                 "success": trace.success,
@@ -482,27 +382,22 @@ class MetricsCalculator:
                 "timestamp": trace.end_time.isoformat() if trace.end_time else None,
             })
             
-            # Record error patterns
             if not trace.success and trace.error:
                 error_type = trace.error.get("type", "unknown")
                 error_patterns[error_type] += 1
             
-            # Record timing patterns
             if trace.end_time:
                 hour = trace.end_time.hour
                 timing_patterns[hour].append(trace.duration_ms or 0)
         
-        # Analyze operation sequences
         sequence_analysis = {}
         for agent_id, sequences in operation_sequences.items():
             if len(sequences) >= 2:
-                # Find common operation pairs
                 operation_pairs = defaultdict(int)
                 for i in range(len(sequences) - 1):
                     pair = f"{sequences[i]['operation']} -> {sequences[i+1]['operation']}"
                     operation_pairs[pair] += 1
                 
-                # Find most common sequence
                 common_sequences = sorted(
                     operation_pairs.items(),
                     key=lambda x: x[1],
@@ -517,7 +412,6 @@ class MetricsCalculator:
                     if any(s["duration"] for s in sequences) else 0,
                 }
         
-        # Analyze timing patterns
         timing_analysis = {}
         for hour, durations in timing_patterns.items():
             if durations:
@@ -528,14 +422,12 @@ class MetricsCalculator:
                     "max_duration": max(durations),
                 }
         
-        # Calculate behavioral consistency
         behavioral_consistency = {}
         for agent_id, sequences in operation_sequences.items():
             if len(sequences) >= 3:
-                # Check if operations follow similar patterns
                 operations = [s["operation"] for s in sequences]
                 unique_operations = set(operations)
-                consistency_score = len(unique_operations) / len(operations)  # Lower = more consistent
+                consistency_score = len(unique_operations) / len(operations)
                 
                 behavioral_consistency[agent_id] = {
                     "consistency_score": consistency_score,
@@ -562,26 +454,19 @@ class MetricsCalculator:
         return result
     
     def _get_traces_for_period(self, hours: int) -> List[ExecutionTrace]:
-        """Get traces within the specified time period."""
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-        
-        # We'll use the trace repository's find methods
-        # This is a simplified version - in reality, you'd use actual repository methods
-        all_traces = ExecutionTrace.query.filter(
+        return ExecutionTrace.query.filter(
             ExecutionTrace.end_time >= cutoff
         ).all()
-        
-        return all_traces
-    
+
     def _calculate_overall_quality_metrics(self, traces: List[ExecutionTrace]) -> Dict[str, Any]:
-        """Calculate overall quality metrics from traces."""
         if not traces:
             return {}
         
         quality_scores = []
         for trace in traces:
-            if trace.quality_metrics and "quality_score" in trace.quality_metrics:
-                quality_scores.append(trace.quality_metrics["quality_score"])
+            if trace.quality_metrics and "composite_quality_score" in trace.quality_metrics:
+                quality_scores.append(trace.quality_metrics["composite_quality_score"])
         
         if not quality_scores:
             return {}
@@ -595,7 +480,6 @@ class MetricsCalculator:
         }
     
     def _calculate_quality_distribution(self, traces: List[ExecutionTrace]) -> Dict[str, int]:
-        """Calculate distribution of quality scores."""
         distribution = {
             "excellent": 0,
             "good": 0,
@@ -605,8 +489,8 @@ class MetricsCalculator:
         }
         
         for trace in traces:
-            if trace.quality_metrics and "quality_score" in trace.quality_metrics:
-                score = trace.quality_metrics["quality_score"]
+            if trace.quality_metrics and "composite_quality_score" in trace.quality_metrics:
+                score = trace.quality_metrics["composite_quality_score"]
                 if score >= 0.9:
                     distribution["excellent"] += 1
                 elif score >= 0.8:
@@ -626,7 +510,6 @@ class MetricsCalculator:
         avg_quality: float,
         avg_decision_quality: float
     ) -> List[str]:
-        """Generate performance improvement recommendations."""
         recommendations = []
         
         if success_rate < 0.7:
@@ -649,46 +532,19 @@ class MetricsCalculator:
         error_patterns: Dict,
         behavioral_consistency: Dict
     ) -> List[str]:
-        """Generate insights from behavior analysis."""
         insights = []
         
-        # Analyze error patterns
         if error_patterns:
             most_common_error = max(error_patterns.items(), key=lambda x: x[1])[0]
             insights.append(f"Most common error: {most_common_error}")
         
-        # Analyze behavioral consistency
         for agent_id, consistency in behavioral_consistency.items():
             if consistency["consistency_level"] == "low":
                 insights.append(f"Agent {agent_id} shows low behavioral consistency")
             elif consistency["consistency_level"] == "high":
                 insights.append(f"Agent {agent_id} shows high behavioral consistency (predictable)")
         
-        # Check for repetitive error patterns
         if len(error_patterns) == 1 and list(error_patterns.values())[0] > 5:
             insights.append("Single error type dominating failures - consider targeted fix")
         
         return insights
-    
-    def _get_cached(self, cache_key: str) -> Optional[Any]:
-        """Get cached result if valid."""
-        if cache_key in self._cache:
-            timestamp, result = self._cache[cache_key]
-            if datetime.now(timezone.utc) - timestamp < self._cache_ttl:
-                return result
-            else:
-                del self._cache[cache_key]
-        return None
-    
-    def _cache_result(self, cache_key: str, result: Any) -> None:
-        """Cache a result."""
-        self._cache[cache_key] = (datetime.now(timezone.utc), result)
-        
-        # Clean old cache entries
-        current_time = datetime.now(timezone.utc)
-        expired_keys = [
-            key for key, (timestamp, _) in self._cache.items()
-            if current_time - timestamp > self._cache_ttl
-        ]
-        for key in expired_keys:
-            del self._cache[key]

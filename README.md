@@ -81,7 +81,7 @@ This will start:
 The container automatically:
 
 - Starts `ollama serve`
-- Pulls the `deepseek-coder` model
+- Pulls the model defined in .env
 
 Default model used by the app:
 ```

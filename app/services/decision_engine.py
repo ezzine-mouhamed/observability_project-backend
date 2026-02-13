@@ -1,30 +1,36 @@
-from datetime import datetime, timezone
-from typing import Any, Dict
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, Optional
 
-from pydantic_core import ValidationError
+from app.exceptions.validation import ValidationError
 from app.exceptions.base import AppException
 from app.models.task import Task
+from app.models.trace import ExecutionTrace
 from app.observability.agent_observer import AgentObserver
 from app.observability.tracer import Tracer
+from app.services.llm_client import LLMClient
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 class DecisionEngine:
-    def __init__(self):
-        self.tracer = Tracer()
-        self.observer = AgentObserver(self.tracer)  # Agent observer
+    def __init__(self, 
+            tracer: Optional[Tracer] = None,
+            agent_observer: Optional[AgentObserver] = None,
+            llm_client: Optional[LLMClient] = None):
+        self.tracer = tracer or Tracer()
+        self.tracer.add_quality_hook(self._on_trace_completed)
+        self.observer = agent_observer or AgentObserver(self.tracer)
+        self.llm_client = llm_client or LLMClient(tracer=self.tracer)
         
     def get_execution_plan(self, task_type: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
-        """Determine the best execution plan for a given task."""
         start_time = datetime.now(timezone.utc)
+        original_context = self.tracer.get_current_agent_context()
         
-        # Set agent context
         self.tracer.update_agent_context(
             agent_id="decision_engine",
             agent_type="planner",
             goal=f"Create execution plan for {task_type}",
-            total_steps=3,  # complexity assessment, plan selection, validation
+            total_steps=3,
         )
         
         with self.tracer.start_trace(
@@ -32,7 +38,6 @@ class DecisionEngine:
             {"task_type": task_type, "parameters": parameters}
         ):
             try:
-                # Record thought process
                 self.observer.record_thought_process(
                     agent_name="decision_engine",
                     input_data={"task_type": task_type, "parameters": parameters},
@@ -45,7 +50,6 @@ class DecisionEngine:
                     metadata={"phase": "initialization"}
                 )
                 
-                # Validate inputs
                 if not task_type or not isinstance(task_type, str):
                     raise ValidationError(
                         message="Task type must be a non-empty string",
@@ -55,18 +59,17 @@ class DecisionEngine:
                         log=False,
                     )
                 
-                # Increment agent step
                 self.tracer.increment_agent_step()
                 
-                # Analyze task complexity
                 complexity = self._assess_complexity(task_type, parameters)
                 
-                # Record decision rationale
                 complexity_options = [
                     {"name": "simple", "criteria": "basic operations, minimal processing"},
                     {"name": "moderate", "criteria": "requires validation, multi-step"},
                     {"name": "complex", "criteria": "multi-stage, requires analysis"},
                 ]
+                
+                confidence = self._calculate_complexity_confidence(task_type, parameters)
                 
                 self.observer.record_decision_rationale(
                     decision_id=f"complexity_{task_type}_{start_time.timestamp()}",
@@ -74,15 +77,14 @@ class DecisionEngine:
                     options_considered=complexity_options,
                     chosen_option={"name": complexity, "reason": self._get_complexity_reason(task_type, parameters)},
                     rationale=f"Selected {complexity} based on task type '{task_type}' and parameter analysis",
-                    confidence=self._calculate_complexity_confidence(task_type, parameters),
+                    confidence=confidence,
                     tradeoffs=[
-                        f"Simple might under-process, complex might over-process",
-                        f"Balance between accuracy and efficiency",
+                        "Simple might under-process, complex might over-process",
+                        "Balance between accuracy and efficiency",
                     ],
                     metadata={"task_type": task_type, "parameter_count": len(parameters)}
                 )
                 
-                # Select appropriate plan
                 if complexity == "simple":
                     plan = self._get_simple_plan(task_type, parameters)
                 elif complexity == "moderate":
@@ -98,9 +100,8 @@ class DecisionEngine:
                             "complexity": complexity,
                         }
                     )
-                plan["agent"] = "decision_engine"  # Add agent field for traceability
+                plan["agent"] = "decision_engine"
                 
-                # Record plan selection rationale
                 self.tracer.increment_agent_step()
                 
                 plan_options = [
@@ -108,6 +109,9 @@ class DecisionEngine:
                     {"name": "moderate_plan", "steps": 2, "description": "Validation + processing"},
                     {"name": "complex_plan", "steps": 3, "description": "Multi-stage analysis"},
                 ]
+                
+                # Confidence based on historical success for this complexity
+                plan_confidence = self._get_plan_confidence(complexity)
                 
                 self.observer.record_decision_rationale(
                     decision_id=f"plan_selection_{plan['id']}",
@@ -120,41 +124,15 @@ class DecisionEngine:
                         "reason": plan.get("reason", ""),
                     },
                     rationale=f"Selected {complexity} plan with {len(plan.get('steps', []))} steps based on complexity assessment",
-                    confidence=0.8,  # High confidence in plan selection
+                    confidence=plan_confidence,
                     tradeoffs=[
-                        f"More steps increase reliability but reduce speed",
-                        f"Fewer steps are faster but may miss edge cases",
+                        "More steps increase reliability but reduce speed",
+                        "Fewer steps are faster but may miss edge cases",
                     ]
                 )
                 
-                # Validate the plan
                 self._validate_plan(plan, task_type, parameters)
                 
-                # Record final self-evaluation
-                self.tracer.increment_agent_step()
-                
-                self.observer.record_self_evaluation(
-                    agent_name="decision_engine",
-                    task_id=plan["id"],
-                    evaluation_criteria={
-                        "completeness": 0.3,
-                        "appropriateness": 0.4,
-                        "efficiency": 0.3,
-                    },
-                    self_scores={
-                        "completeness": 0.9,
-                        "appropriateness": 0.8,
-                        "efficiency": 0.7,
-                    },
-                    justification=f"Plan covers all required aspects, appropriate for {complexity} task, could be more efficient",
-                    improvements_suggested=[
-                        "Cache similar plan selections",
-                        "Optimize step ordering based on historical data",
-                    ],
-                    metadata={"complexity": complexity, "step_count": len(plan.get("steps", []))}
-                )
-                
-                # Record decision
                 decision_time = (datetime.now(timezone.utc) - start_time).total_seconds()
                 self.tracer.record_decision("execution_plan_selected", {
                     "task_type": task_type,
@@ -162,7 +140,6 @@ class DecisionEngine:
                     "plan_id": plan["id"],
                     "plan_steps": len(plan.get("steps", [])),
                     "decision_time": decision_time,
-                    "quality_score": 0.8,  # Self-assessed quality
                 })
                 
                 logger.info("Execution plan selected", extra={
@@ -170,14 +147,11 @@ class DecisionEngine:
                     "complexity": complexity,
                     "plan_id": plan["id"],
                     "plan_steps": len(plan.get("steps", [])),
-                    "decision_confidence": 0.8,
+                    "decision_confidence": plan_confidence,
                 })
-                
-                return plan
                 
             except (AppException, ValidationError):
                 raise
-                
             except Exception as e:
                 raise AppException(
                     message=f"Failed to create execution plan: {str(e)}",
@@ -188,9 +162,31 @@ class DecisionEngine:
                         "original_exception": str(e),
                     }
                 ) from e
-    
+            finally:
+                self.tracer.context.agent_context = original_context
+                
+            return plan
+
+    def _get_plan_confidence(self, complexity: str) -> float:
+        """Compute confidence based on recent success rate for this complexity."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        # Find all task_execution traces that had a decision with this complexity
+        traces = ExecutionTrace.query.filter(
+            ExecutionTrace.operation == 'task_execution',
+            ExecutionTrace.end_time >= cutoff
+        ).all()
+        relevant = []
+        for t in traces:
+            for dec in t.decisions:
+                if dec.get("type") == "execution_plan_selected" and dec.get("context", {}).get("complexity") == complexity:
+                    relevant.append(t)
+                    break
+        if not relevant:
+            return 0.7  # fallback
+        success = sum(1 for t in relevant if t.success)
+        return success / len(relevant)
+
     def _get_complexity_reason(self, task_type: str, parameters: Dict[str, Any]) -> str:
-        """Generate a reason for complexity assessment."""
         if task_type in ["extract", "translate"]:
             return "Simple single-operation task"
         elif task_type in ["summarize", "classify"]:
@@ -202,15 +198,12 @@ class DecisionEngine:
             return "Moderate default complexity"
     
     def _calculate_complexity_confidence(self, task_type: str, parameters: Dict[str, Any]) -> float:
-        """Calculate confidence in complexity assessment."""
-        # Simple heuristic
         if task_type in ["extract", "translate", "summarize", "classify", "analyze"]:
-            return 0.9  # High confidence for known types
+            return 0.9
         else:
-            return 0.6  # Lower confidence for unknown types
+            return 0.6
 
     def evaluate_condition(self, condition: str, task: Task, context: Dict[str, Any]) -> bool:
-        """Evaluate a condition in the given context."""
         start_time = datetime.now(timezone.utc)
         
         with self.tracer.start_trace(
@@ -222,7 +215,6 @@ class DecisionEngine:
             }
         ):
             try:
-                # Validate inputs using ValidationError
                 if not condition or not isinstance(condition, str):
                     raise ValidationError(
                         message="Condition must be a non-empty string",
@@ -241,10 +233,8 @@ class DecisionEngine:
                         log=False,
                     )
                 
-                # Evaluate condition
                 result = self._evaluate_condition_logic(condition, context)
                 
-                # Record decision
                 evaluation_time = (datetime.now(timezone.utc) - start_time).total_seconds()
                 self.tracer.record_decision("condition_evaluated", {
                     "condition": condition,
@@ -261,15 +251,12 @@ class DecisionEngine:
                 
                 return {
                     "result": result,
-                    "content": task.input_data,  # Echo back input data for context, ensures data flow is traceable
+                    "content": task.input_data,
                 }
                 
             except (AppException, ValidationError):
-                # Re-raise our custom exceptions
                 raise
-                
             except Exception as e:
-                # Wrap other exceptions in AppException
                 raise AppException(
                     message=f"Failed to evaluate condition: {str(e)}",
                     extra={
@@ -282,21 +269,12 @@ class DecisionEngine:
                 ) from e
     
     def _assess_complexity(self, task_type: str, parameters: Dict[str, Any]) -> str:
-        """Assess the complexity of a task."""
         try:
-            # Simple complexity assessment based on task type and parameters
-            if task_type in ["extract", "translate"]:
-                return "simple"
-            elif task_type in ["summarize", "classify"]:
-                max_length = parameters.get("max_length", 0)
-                if max_length > 1000:
-                    return "complex"
-                return "moderate"
-            elif task_type == "analyze":
-                return "complex"
-            else:
-                return "moderate"
-                
+            prompt = f"Given task type '{task_type}' and parameters {parameters}, what is the complexity? Respond with only one word: simple, moderate, or complex."
+            response = self.llm_client.process(prompt, {})
+            logger.debug("Complexity assessment response", extra={"response": response})
+            complexity = response.get("content", "moderate").strip().lower()
+            return complexity if complexity in ["simple", "moderate", "complex"] else "moderate"
         except Exception as e:
             raise AppException(
                 message=f"Failed to assess task complexity: {str(e)}",
@@ -307,12 +285,8 @@ class DecisionEngine:
                 }
             ) from e
 
-    def _get_simple_plan(
-        self, task_type: str, parameters: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Get simple execution plan."""
+    def _get_simple_plan(self, task_type: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            # Build task-specific prompt
             if task_type == "summarize":
                 max_length = parameters.get('max_length', 100)
                 prompt = f"Summarize in about {max_length} words:"
@@ -332,7 +306,7 @@ class DecisionEngine:
                         "name": f"{task_type}_execution",
                         "type": "llm_call",
                         "parameters": {
-                            "prompt": prompt,  # Use the specific prompt
+                            "prompt": prompt,
                             "llm_params": {"temperature": 0.1, "max_tokens": 500},
                         },
                     }
@@ -349,12 +323,8 @@ class DecisionEngine:
                 }
             ) from e
 
-    def _get_moderate_plan(
-        self, task_type: str, parameters: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Get moderate execution plan."""
+    def _get_moderate_plan(self, task_type: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            # Build task-specific prompt
             if task_type == "summarize":
                 max_length = parameters.get('max_length', 100)
                 format_type = parameters.get('format', 'concise')
@@ -383,7 +353,7 @@ class DecisionEngine:
                         "name": f"{task_type}_processing",
                         "type": "llm_call",
                         "parameters": {
-                            "prompt": prompt,  # Use the specific prompt
+                            "prompt": prompt,
                             "llm_params": {"temperature": 0.3, "max_tokens": 1000},
                         },
                     },
@@ -405,12 +375,8 @@ class DecisionEngine:
                 }
             ) from e
 
-    def _get_complex_plan(
-        self, task_type: str, parameters: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Get complex execution plan."""
+    def _get_complex_plan(self, task_type: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            # Build task-specific prompts
             if task_type == "analyze":
                 prompt1 = "Perform initial analysis of the input, identifying key themes and structure"
                 prompt2 = "Provide detailed analysis with critical insights and recommendations"
@@ -472,8 +438,13 @@ class DecisionEngine:
             ) from e
 
     def _evaluate_condition_logic(self, condition: str, context: Dict[str, Any]) -> bool:
-        """Internal logic for condition evaluation."""
         try:
+            if not condition or not isinstance(condition, str):
+                raise ValidationError(
+                    message="Condition must be a non-empty string",
+                    field="condition",
+                    value=condition
+                )
             result = False
             
             if condition == "requires_validation":
@@ -485,7 +456,6 @@ class DecisionEngine:
                 context_str = str(context).lower()
                 result = any(keyword in context_str for keyword in sensitive_keywords)
             else:
-                # For unknown conditions, use ValidationError
                 raise ValidationError(
                     message=f"Unknown condition type: '{condition}'",
                     field="condition",
@@ -505,7 +475,7 @@ class DecisionEngine:
             return result
             
         except ValidationError:
-            raise  # Re-raise without wrapping
+            raise
         except Exception as e:
             raise AppException(
                 message=f"Condition evaluation logic failed: {str(e)}",
@@ -517,9 +487,7 @@ class DecisionEngine:
             ) from e
 
     def _validate_plan(self, plan: Dict[str, Any], task_type: str, parameters: Dict[str, Any]) -> None:
-        """Validate the generated execution plan."""
         try:
-            # Basic validation
             if not plan.get("id"):
                 raise ValidationError(
                     message="Generated plan missing ID",
@@ -546,7 +514,6 @@ class DecisionEngine:
                     }
                 )
             
-            # Validate each step
             for i, step in enumerate(plan["steps"]):
                 if not step.get("name"):
                     raise ValidationError(
@@ -593,7 +560,6 @@ class DecisionEngine:
             ) from e
     
     def _summarize_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a safe summary of context for logging."""
         try:
             if not context:
                 return {"empty": True}
@@ -601,7 +567,7 @@ class DecisionEngine:
             if isinstance(context, dict):
                 return {
                     "key_count": len(context),
-                    "keys": list(context.keys())[:5],  # First 5 keys only
+                    "keys": list(context.keys())[:5],
                     "has_nested": any(isinstance(v, (dict, list)) for v in context.values()),
                 }
             elif isinstance(context, list):
@@ -616,3 +582,15 @@ class DecisionEngine:
                 }
         except Exception:
             return {"summary_error": True}
+
+    def _on_trace_completed(self, trace_data):
+        if trace_data.get("success") and trace_data.get("quality_metrics", {}).get("composite_quality_score", 0) > 0.8:
+            self.observer.detect_behavior_pattern(
+                agent_name=trace_data.get("agent_context", {}).get("agent_id", "unknown"),
+                behavior_type="high_quality_execution",
+                pattern_data={
+                    "operation": trace_data.get("operation"),
+                    "quality_score": trace_data["quality_metrics"]["composite_quality_score"],
+                    "duration": trace_data.get("duration_ms", 0)
+                }
+            )

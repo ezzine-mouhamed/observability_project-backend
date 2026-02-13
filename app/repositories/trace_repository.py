@@ -18,7 +18,7 @@ class TraceRepository:
 
     def get_by_id(self, trace_id: int) -> Optional[ExecutionTrace]:
         """Get trace by database ID."""
-        return ExecutionTrace.query.get(trace_id)
+        return db.session.get(ExecutionTrace, trace_id)
 
     def get_by_trace_id(self, trace_uuid: str) -> Optional[ExecutionTrace]:
         """Get trace by UUID trace ID."""
@@ -32,43 +32,6 @@ class TraceRepository:
             .all()
         )
 
-    def get_trace_tree(self, root_trace_id: str) -> Dict[str, Any]:
-        """Get a trace and all its child traces as a tree."""
-        root_trace = self.get_by_trace_id(root_trace_id)
-        if not root_trace:
-            return {}
-
-        # Get all traces with this root as ancestor
-        all_traces = ExecutionTrace.query.filter(
-            ExecutionTrace.trace_id.like(f"{root_trace_id}%")
-        ).all()
-
-        # Build tree structure
-        trace_dict = {trace.trace_id: trace for trace in all_traces}
-        tree = self._build_tree(root_trace_id, trace_dict)
-
-        return tree
-
-    def _build_tree(
-        self, current_id: str, trace_dict: Dict[str, ExecutionTrace]
-    ) -> Dict[str, Any]:
-        """Recursively build trace tree."""
-        trace = trace_dict.get(current_id)
-        if not trace:
-            return {}
-
-        node = trace.to_dict()
-        node["children"] = []
-
-        # Find children
-        for trace_id, child_trace in trace_dict.items():
-            if child_trace.parent_trace_id == current_id:
-                child_node = self._build_tree(trace_id, trace_dict)
-                if child_node:
-                    node["children"].append(child_node)
-
-        return node
-
     def find_by_operation(
         self, operation: str, limit: int = 100
     ) -> List[ExecutionTrace]:
@@ -76,35 +39,6 @@ class TraceRepository:
         return (
             ExecutionTrace.query.filter_by(operation=operation)
             .order_by(ExecutionTrace.start_time.desc())
-            .limit(limit)
-            .all()
-        )
-
-    def find_failed_traces(
-        self, hours: int = 24, limit: int = 100
-    ) -> List[ExecutionTrace]:
-        """Find failed traces within time period."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-        return (
-            ExecutionTrace.query.filter(
-                not ExecutionTrace.success and ExecutionTrace.created_at >= cutoff
-            )
-            .order_by(ExecutionTrace.created_at.desc())
-            .limit(limit)
-            .all()
-        )
-
-    def find_slow_traces(
-        self, threshold_ms: int = 1000, hours: int = 24, limit: int = 100
-    ) -> List[ExecutionTrace]:
-        """Find slow traces exceeding threshold."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-        return (
-            ExecutionTrace.query.filter(
-                ExecutionTrace.duration_ms >= threshold_ms,
-                ExecutionTrace.created_at >= cutoff,
-            )
-            .order_by(ExecutionTrace.duration_ms.desc())
             .limit(limit)
             .all()
         )
@@ -177,7 +111,12 @@ class TraceRepository:
         ).all()
         
         if not traces:
-            return {"agents": {}, "total": 0}
+            return {
+                "agents": {},
+                "total_agents": 0,  # Add this
+                "total_traces": 0,  # Change from "total" to "total_traces"
+                "time_window_hours": time_window_hours,
+            }
         
         # Group by agent
         agent_metrics = defaultdict(lambda: {
@@ -294,13 +233,19 @@ class TraceRepository:
             ExecutionTrace.created_at >= cutoff,
             ExecutionTrace.decisions.isnot(None)
         ).all()
+    
+        # Filter out traces with empty decision lists
+        traces_with_decisions = []
+        for trace in traces:
+            if trace.decisions and len(trace.decisions) > 0:  # Check if not empty
+                traces_with_decisions.append(trace)
         
-        if not traces:
+        if not traces_with_decisions:
             return {"no_decisions": True}
         
         # Extract all decisions
         all_decisions = []
-        for trace in traces:
+        for trace in traces_with_decisions:
             if trace.decisions:
                 for decision in trace.decisions:
                     if isinstance(decision, dict):

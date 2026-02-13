@@ -11,15 +11,15 @@ class Config:
     TRACING_ENABLED = True
     LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
-    DEFAULT_TASK_TIMEOUT = 60
+    DEFAULT_TASK_TIMEOUT = 120
     MAX_RETRY_ATTEMPTS = 3
-    LLM_TIMEOUT_SECONDS = 60
+    LLM_TIMEOUT_SECONDS = 120
 
     DEBUG = os.environ.get("FLASK_DEBUG", "False").lower() == "true"
 
     OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_DEFAULT_MODEL", "deepseek-coder")
-    OLLAMA_REQUEST_TIMEOUT = 60
+    OLLAMA_REQUEST_TIMEOUT = 120
 
 
 class DevelopmentConfig(Config):

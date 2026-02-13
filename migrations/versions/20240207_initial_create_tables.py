@@ -31,8 +31,6 @@ def upgrade():
         sa.Column('started_at', sa.DateTime(timezone=True), nullable=True),
         sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
         sa.Column('quality_score', sa.Float(), nullable=True),
-        sa.Column('complexity_level', sa.String(length=50), nullable=True),
-        sa.Column('agent_involved', sa.String(length=100), nullable=True),
         sa.Column('validation_results', postgresql.JSONB(astext_type=sa.Text()), nullable=True, server_default='{}'),
         sa.Column('performance_metrics', postgresql.JSONB(astext_type=sa.Text()), nullable=True, server_default='{}'),
         sa.PrimaryKeyConstraint('id')
@@ -57,9 +55,6 @@ def upgrade():
         sa.Column('duration_ms', sa.Integer(), nullable=True),
         sa.Column('success', sa.Boolean(), nullable=False, server_default=sa.text('true')),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column('performance_score', sa.Float(), nullable=True),
-        sa.Column('complexity_score', sa.Float(), nullable=True),
-        sa.Column('efficiency_score', sa.Float(), nullable=True),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('trace_id'),
         sa.ForeignKeyConstraint(['task_id'], ['tasks.id'], ),
@@ -67,8 +62,30 @@ def upgrade():
         sa.Index('ix_execution_traces_operation', 'operation'),
         sa.Index('ix_execution_traces_start_time', 'start_time')
     )
+    
+    # Create agent_insights table
+    op.create_table('agent_insights',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('agent_name', sa.String(length=100), nullable=False),
+        sa.Column('insight_type', sa.String(length=50), nullable=False),
+        sa.Column('insight_data', postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default='{}'),
+        sa.Column('source_trace_id', sa.String(length=36), nullable=True),
+        sa.Column('source_task_id', sa.Integer(), nullable=True),
+        sa.Column('confidence_score', sa.Float(), nullable=True),
+        sa.Column('impact_prediction', sa.String(length=20), nullable=True),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column('applied_at', sa.DateTime(timezone=True), nullable=True),
+        sa.Column('applied_result', sa.Text(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['source_task_id'], ['tasks.id'], ),
+        sa.Index('ix_agent_insights_agent_name', 'agent_name'),
+        sa.Index('ix_agent_insights_insight_type', 'insight_type'),
+        sa.Index('ix_agent_insights_created_at', 'created_at'),
+        sa.Index('ix_agent_insights_applied_at', 'applied_at')
+    )
 
 
 def downgrade():
+    op.drop_table('agent_insights')
     op.drop_table('execution_traces')
     op.drop_table('tasks')

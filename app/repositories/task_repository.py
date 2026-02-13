@@ -16,7 +16,7 @@ class TaskRepository:
 
     def get_by_id(self, task_id: int) -> Optional[Task]:
         """Get task by ID."""
-        return Task.query.get(task_id)
+        return db.session.get(Task, task_id)
 
     def get_by_trace_id(self, trace_id: str) -> Optional[Task]:
         """Get task by trace ID."""

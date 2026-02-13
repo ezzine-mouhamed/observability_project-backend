@@ -2,20 +2,21 @@
 Agent Observer - Core system for agentic self-observation and self-evaluation.
 Tracks agent thought processes, quality metrics, and behavioral patterns.
 """
-import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from enum import Enum
 import hashlib
 
+from app.models.agent_insight import AgentInsight
+from app.models.trace import ExecutionTrace
 from app.observability.tracer import Tracer
+from app.repositories.agent_insight_repository import AgentInsightRepository
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 class ObservationType(Enum):
-    """Types of agent observations."""
     THOUGHT_PROCESS = "thought_process"
     DECISION_RATIONALE = "decision_rationale"
     SELF_EVALUATION = "self_evaluation"
@@ -27,24 +28,17 @@ class ObservationType(Enum):
 
 
 class AgentObserver:
-    """
-    Main observer that tracks agent behavior, thoughts, and self-evaluations.
-    Provides structured self-observation capabilities.
-    """
-    
     def __init__(self, tracer: Optional[Tracer] = None):
         self.tracer = tracer or Tracer()
-        self._behavior_patterns: Dict[str, List[Dict]] = {}
+        # Static thresholds – never modified after creation
         self._quality_thresholds = self._default_quality_thresholds()
-        self._observation_buffer: List[Dict] = []
-        self._buffer_size = 100
         self._session_id = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
+        self._insight_repository = AgentInsightRepository()
         
         logger.info(f"AgentObserver initialized with session: {self.session_id}")
     
     @property
     def session_id(self) -> str:
-        """Get current observation session ID."""
         return self._session_id
     
     def record_thought_process(
@@ -55,19 +49,6 @@ class AgentObserver:
         final_thought: str,
         metadata: Optional[Dict] = None
     ) -> Dict[str, Any]:
-        """
-        Record the complete thought process of an agent.
-        
-        Args:
-            agent_name: Name/identifier of the agent
-            input_data: What the agent was considering
-            thought_chain: Sequential thoughts leading to decision
-            final_thought: The conclusive thought
-            metadata: Additional context
-            
-        Returns:
-            Observation record
-        """
         observation_id = f"thought_{hashlib.md5(str(time.time()).encode()).hexdigest()[:12]}"
         
         observation = {
@@ -84,17 +65,16 @@ class AgentObserver:
             "has_conclusion": bool(final_thought),
         }
         
-        # Store in buffer
-        self._store_observation(observation)
-        
-        # Record in trace if available
         if self.tracer:
-            self.tracer.record_event(
+            self.tracer.record_agent_observation(
                 "agent_thought_recorded",
                 {
                     "observation_id": observation_id,
                     "agent_name": agent_name,
                     "chain_length": len(thought_chain),
+                    "thought_chain": thought_chain,
+                    "final_thought": final_thought,
+                    "has_conclusion": bool(final_thought),
                 }
             )
         
@@ -116,27 +96,10 @@ class AgentObserver:
         options_considered: List[Dict[str, Any]],
         chosen_option: Dict[str, Any],
         rationale: str,
-        confidence: float,  # 0.0 to 1.0
+        confidence: float,
         tradeoffs: List[str],
         metadata: Optional[Dict] = None
     ) -> Dict[str, Any]:
-        """
-        Record detailed rationale for a decision, including alternatives.
-        
-        Args:
-            decision_id: Unique identifier for the decision
-            agent_name: Name of the decision-making agent
-            options_considered: List of options that were evaluated
-            chosen_option: The selected option
-            rationale: Why this option was chosen
-            confidence: Confidence score (0.0-1.0)
-            tradeoffs: List of tradeoffs considered
-            metadata: Additional context
-            
-        Returns:
-            Decision rationale record
-        """
-        # Validate confidence score
         confidence = max(0.0, min(1.0, confidence))
         
         record = {
@@ -158,10 +121,6 @@ class AgentObserver:
             ),
         }
         
-        # Store in buffer
-        self._store_observation(record)
-        
-        # Record in trace
         if self.tracer:
             self.tracer.record_decision(
                 "agent_decision_with_rationale",
@@ -189,28 +148,12 @@ class AgentObserver:
         self,
         agent_name: str,
         task_id: str,
-        evaluation_criteria: Dict[str, float],  # criterion -> weight (0-1)
-        self_scores: Dict[str, float],  # criterion -> self-assigned score (0-1)
+        evaluation_criteria: Dict[str, float],
+        self_scores: Dict[str, float],
         justification: str,
         improvements_suggested: List[str],
         metadata: Optional[Dict] = None
     ) -> Dict[str, Any]:
-        """
-        Record agent's self-evaluation of its performance.
-        
-        Args:
-            agent_name: Name of the evaluating agent
-            task_id: ID of the task being evaluated
-            evaluation_criteria: Criteria and their weights
-            self_scores: Agent's self-assessment scores
-            justification: Justification for scores
-            improvements_suggested: Suggested improvements
-            metadata: Additional context
-            
-        Returns:
-            Self-evaluation record
-        """
-        # Calculate weighted score
         weighted_score = 0.0
         total_weight = 0.0
         
@@ -239,12 +182,8 @@ class AgentObserver:
             "self_criticality": self._calculate_self_criticality(self_scores),
         }
         
-        # Store in buffer
-        self._store_observation(evaluation)
-        
-        # Record in trace
         if self.tracer:
-            self.tracer.record_event(
+            self.tracer.record_agent_observation(
                 "agent_self_evaluation",
                 {
                     "evaluation_id": evaluation["evaluation_id"],
@@ -265,85 +204,7 @@ class AgentObserver:
         )
         
         return evaluation
-    
-    def assess_quality(
-        self,
-        output: Any,
-        expected_criteria: Dict[str, Any],
-        agent_name: str,
-        context: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Assess the quality of an agent's output against expected criteria.
-        
-        Args:
-            output: The output to assess
-            expected_criteria: Dictionary of criteria to check
-            agent_name: Name of the agent producing the output
-            context: Context of the assessment
-            
-        Returns:
-            Quality assessment record
-        """
-        assessment_id = f"qa_{hashlib.md5(str(time.time()).encode()).hexdigest()[:12]}"
-        
-        # Perform quality checks
-        quality_checks = self._perform_quality_checks(output, expected_criteria)
-        
-        # Calculate overall quality score
-        passed_checks = sum(1 for check in quality_checks.values() if check["passed"])
-        total_checks = len(quality_checks)
-        quality_score = passed_checks / total_checks if total_checks > 0 else 0.0
-        
-        assessment = {
-            "assessment_id": assessment_id,
-            "type": ObservationType.QUALITY_ASSESSMENT.value,
-            "agent_name": agent_name,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "output_fingerprint": self._create_fingerprint(output),
-            "quality_checks": quality_checks,
-            "quality_score": quality_score,
-            "passed_checks": passed_checks,
-            "total_checks": total_checks,
-            "meets_threshold": quality_score >= self._quality_thresholds["minimum_quality"],
-            "threshold": self._quality_thresholds["minimum_quality"],
-            "context": context,
-            "session_id": self._session_id,
-            "recommendations": self._generate_quality_recommendations(quality_checks),
-        }
-        
-        # Store in buffer
-        self._store_observation(assessment)
-        
-        # Record in trace
-        if self.tracer:
-            self.tracer.record_event(
-                "quality_assessment",
-                {
-                    "assessment_id": assessment_id,
-                    "quality_score": quality_score,
-                    "passed_checks": passed_checks,
-                    "total_checks": total_checks,
-                    "meets_threshold": assessment["meets_threshold"],
-                }
-            )
-        
-        # Log quality result
-        log_level = logging.INFO if assessment["meets_threshold"] else logging.WARNING
-        logger.log(
-            log_level,
-            f"Quality assessment for agent '{agent_name}'",
-            extra={
-                "assessment_id": assessment_id,
-                "quality_score": quality_score,
-                "passed_checks": passed_checks,
-                "total_checks": total_checks,
-                "meets_threshold": assessment["meets_threshold"],
-            }
-        )
-        
-        return assessment
-    
+
     def detect_behavior_pattern(
         self,
         agent_name: str,
@@ -352,24 +213,7 @@ class AgentObserver:
         frequency: Optional[int] = None,
         context: Optional[Dict] = None
     ) -> Dict[str, Any]:
-        """
-        Detect and record patterns in agent behavior.
-        
-        Args:
-            agent_name: Name of the agent
-            behavior_type: Type of behavior pattern
-            pattern_data: Details of the pattern
-            frequency: How often this pattern occurs
-            context: Context of the pattern
-            
-        Returns:
-            Behavior pattern record
-        """
         pattern_id = f"pattern_{hashlib.md5(str(time.time()).encode()).hexdigest()[:12]}"
-        
-        # Store pattern in memory for tracking
-        if agent_name not in self._behavior_patterns:
-            self._behavior_patterns[agent_name] = []
         
         pattern_record = {
             "pattern_id": pattern_id,
@@ -383,16 +227,7 @@ class AgentObserver:
             "session_id": self._session_id,
             "significance": self._assess_pattern_significance(pattern_data, behavior_type),
         }
-        
-        self._behavior_patterns[agent_name].append(pattern_record)
-        
-        # Keep only recent patterns
-        if len(self._behavior_patterns[agent_name]) > 100:
-            self._behavior_patterns[agent_name] = self._behavior_patterns[agent_name][-100:]
-        
-        # Store in observation buffer
-        self._store_observation(pattern_record)
-        
+
         logger.info(
             f"Behavior pattern detected for agent '{agent_name}'",
             extra={
@@ -405,56 +240,93 @@ class AgentObserver:
         
         return pattern_record
     
-    def get_agent_insights(
-        self,
-        agent_name: str,
-        time_window_hours: int = 24
-    ) -> Dict[str, Any]:
-        """
-        Generate insights about an agent's behavior and performance.
+    def get_agent_insights(self, agent_name: str, time_window_hours: int = 24) -> Dict[str, Any]:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=time_window_hours)
         
-        Args:
-            agent_name: Name of the agent
-            time_window_hours: Time window for analysis
-            
-        Returns:
-            Agent insights dictionary
-        """
-        # Filter observations for this agent within time window
-        relevant_observations = [
-            obs for obs in self._observation_buffer
-            if obs.get("agent_name") == agent_name
-        ]
+        # Query database for persisted traces
+        traces = ExecutionTrace.query.filter(
+            ExecutionTrace.end_time >= cutoff
+        ).all()
         
-        if not relevant_observations:
+        # Also include current in-memory traces from tracer
+        current_traces = []
+        if self.tracer:
+            current_traces = self.tracer.get_current_traces()
+        
+        observations = []
+        quality_scores = []
+        decision_count = 0
+        decision_qualities = []
+        
+        # Process database traces
+        for trace in traces:
+            if trace.agent_context and trace.agent_context.get("agent_id") == agent_name:
+                # Collect observations
+                for obs in trace.agent_observations:
+                    obs_copy = obs.copy()
+                    obs_copy["timestamp"] = datetime.fromisoformat(obs_copy["timestamp"])
+                    observations.append(obs_copy)
+                
+                if trace.quality_metrics and "composite_quality_score" in trace.quality_metrics:
+                    quality_scores.append(trace.quality_metrics["composite_quality_score"])
+                
+                if trace.decisions:
+                    for decision in trace.decisions:
+                        decision_count += 1
+                        if decision.get("quality") and decision["quality"].get("overall_score") is not None:
+                            decision_qualities.append(decision["quality"]["overall_score"])
+        
+        # Process current in-memory traces
+        for trace_dict in current_traces:
+            if trace_dict.get("agent_context", {}).get("agent_id") == agent_name:
+                # Collect observations
+                for obs in trace_dict.get("agent_observations", []):
+                    obs_copy = obs.copy()
+                    obs_copy["timestamp"] = datetime.fromisoformat(obs_copy["timestamp"])
+                    observations.append(obs_copy)
+                
+                if trace_dict.get("quality_metrics", {}).get("composite_quality_score"):
+                    quality_scores.append(trace_dict["quality_metrics"]["composite_quality_score"])
+                
+                if trace_dict.get("decisions"):
+                    for decision in trace_dict["decisions"]:
+                        decision_count += 1
+                        if decision.get("quality") and decision["quality"].get("overall_score") is not None:
+                            decision_qualities.append(decision["quality"]["overall_score"])
+        
+        if not observations and decision_count == 0:
             return {"agent_name": agent_name, "no_data": True}
         
-        # Calculate various metrics
-        decision_count = sum(1 for obs in relevant_observations 
-                           if obs.get("type") == ObservationType.DECISION_RATIONALE.value)
-        evaluation_count = sum(1 for obs in relevant_observations 
-                             if obs.get("type") == ObservationType.SELF_EVALUATION.value)
-        quality_assessments = [obs for obs in relevant_observations 
-                             if obs.get("type") == ObservationType.QUALITY_ASSESSMENT.value]
+        avg_decision_quality = 0.0
+        if decision_qualities:
+            avg_decision_quality = sum(decision_qualities) / len(decision_qualities)
         
-        # Calculate average quality score
+        # Other metrics from observations
+        obs_decision_count = sum(1 for obs in observations 
+                            if obs.get("type") == ObservationType.DECISION_RATIONALE.value)
+        evaluation_count = sum(1 for obs in observations 
+                            if obs.get("type") == ObservationType.SELF_EVALUATION.value)
+        
         avg_quality = 0.0
-        if quality_assessments:
-            avg_quality = sum(obs.get("quality_score", 0) for obs in quality_assessments) / len(quality_assessments)
+        if quality_scores:
+            avg_quality = sum(quality_scores) / len(quality_scores)
         
-        # Detect common patterns
         common_behavior_patterns = self._analyze_behavior_patterns(agent_name)
+        performance_trend = self._calculate_performance_trend(observations)
+        confidence_distribution = self._calculate_confidence_distribution(observations)
+        recommendations = self._generate_agent_recommendations(observations)
         
         insights = {
             "agent_name": agent_name,
-            "observation_count": len(relevant_observations),
+            "observation_count": len(observations),
             "decision_count": decision_count,
+            "average_decision_quality": avg_decision_quality,
             "self_evaluation_count": evaluation_count,
             "average_quality_score": avg_quality,
             "behavior_patterns": common_behavior_patterns,
-            "performance_trend": self._calculate_performance_trend(relevant_observations),
-            "confidence_distribution": self._calculate_confidence_distribution(relevant_observations),
-            "recommendations": self._generate_agent_recommendations(relevant_observations),
+            "performance_trend": performance_trend,
+            "confidence_distribution": confidence_distribution,
+            "recommendations": recommendations,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "time_window_hours": time_window_hours,
         }
@@ -462,31 +334,22 @@ class AgentObserver:
         logger.info(
             f"Generated insights for agent '{agent_name}'",
             extra={
-                "observation_count": len(relevant_observations),
-                "average_quality_score": avg_quality,
+                "observation_count": len(observations),
                 "decision_count": decision_count,
+                "average_decision_quality": avg_decision_quality,
+                "average_quality_score": avg_quality,
             }
         )
         
         return insights
-    
-    def _store_observation(self, observation: Dict[str, Any]) -> None:
-        """Store observation in buffer."""
-        self._observation_buffer.append(observation)
-        
-        # Maintain buffer size
-        if len(self._observation_buffer) > self._buffer_size:
-            self._observation_buffer = self._observation_buffer[-self._buffer_size:]
-    
+
     def _create_fingerprint(self, data: Any) -> str:
-        """Create a fingerprint for data (privacy-safe)."""
         data_str = str(data)
         if len(data_str) > 1000:
             data_str = data_str[:1000]
         return hashlib.md5(data_str.encode()).hexdigest()
     
     def _classify_confidence(self, confidence: float) -> str:
-        """Classify confidence level."""
         if confidence >= 0.9:
             return "very_high"
         elif confidence >= 0.7:
@@ -504,14 +367,8 @@ class AgentObserver:
         rationale: str,
         confidence: float
     ) -> str:
-        """Evaluate the quality of a decision analysis."""
-        # Check if multiple options were considered
         has_multiple_options = len(options_considered) > 1
-        
-        # Check rationale quality
         rationale_quality = "good" if len(rationale) > 50 else "poor"
-        
-        # Check confidence alignment
         confidence_aligned = confidence > 0.5 if has_multiple_options else True
         
         if has_multiple_options and rationale_quality == "good" and confidence_aligned:
@@ -522,7 +379,6 @@ class AgentObserver:
             return "low"
     
     def _categorize_score(self, score: float) -> str:
-        """Categorize a score."""
         if score >= 0.9:
             return "excellent"
         elif score >= 0.8:
@@ -535,117 +391,21 @@ class AgentObserver:
             return "poor"
     
     def _calculate_self_criticality(self, self_scores: Dict[str, float]) -> float:
-        """
-        Calculate how self-critical the agent is.
-        Lower scores indicate higher self-criticality.
-        """
         if not self_scores:
             return 0.5
         avg_score = sum(self_scores.values()) / len(self_scores)
-        # Invert so lower scores = more critical
         return 1.0 - avg_score
-    
-    def _perform_quality_checks(
-        self,
-        output: Any,
-        expected_criteria: Dict[str, Any]
-    ) -> Dict[str, Dict[str, Any]]:
-        """Perform various quality checks on output."""
-        checks = {}
-        
-        # Check 1: Output is not empty
-        checks["not_empty"] = {
-            "passed": bool(output),
-            "actual": "empty" if not output else "has_content",
-            "expected": "has_content",
-        }
-        
-        # Check 2: Output is appropriate type
-        expected_type = expected_criteria.get("type", "any")
-        if expected_type != "any":
-            checks["correct_type"] = {
-                "passed": isinstance(output, self._get_type_from_string(expected_type)),
-                "actual": type(output).__name__,
-                "expected": expected_type,
-            }
-        
-        # Check 3: Output length (if applicable)
-        if isinstance(output, (str, list, dict)):
-            output_length = len(output)
-            min_length = expected_criteria.get("min_length", 0)
-            max_length = expected_criteria.get("max_length", float('inf'))
-            
-            checks["length"] = {
-                "passed": min_length <= output_length <= max_length,
-                "actual": output_length,
-                "expected": f"{min_length}-{max_length}",
-            }
-        
-        # Check 4: Contains required keys/fields
-        required_keys = expected_criteria.get("required_keys", [])
-        if required_keys and isinstance(output, dict):
-            missing_keys = [key for key in required_keys if key not in output]
-            checks["required_keys"] = {
-                "passed": len(missing_keys) == 0,
-                "actual": f"missing: {missing_keys}" if missing_keys else "all_present",
-                "expected": f"all of {required_keys}",
-            }
-        
-        # Check 5: Structured format (for JSON/dict)
-        if isinstance(output, (dict, list)):
-            checks["structured"] = {
-                "passed": True,  # Already structured
-                "actual": "structured",
-                "expected": "structured",
-            }
-        
-        return checks
-    
-    def _get_type_from_string(self, type_str: str) -> type:
-        """Convert type string to actual type."""
-        type_map = {
-            "str": str,
-            "string": str,
-            "int": int,
-            "integer": int,
-            "float": float,
-            "bool": bool,
-            "boolean": bool,
-            "list": list,
-            "dict": dict,
-            "tuple": tuple,
-        }
-        return type_map.get(type_str.lower(), object)
-    
-    def _generate_quality_recommendations(self, quality_checks: Dict) -> List[str]:
-        """Generate recommendations based on quality check failures."""
-        recommendations = []
-        
-        for check_name, check_result in quality_checks.items():
-            if not check_result["passed"]:
-                if check_name == "not_empty":
-                    recommendations.append("Output should not be empty")
-                elif check_name == "correct_type":
-                    recommendations.append(f"Output should be of type {check_result['expected']}")
-                elif check_name == "length":
-                    recommendations.append(f"Output length should be between {check_result['expected']}")
-                elif check_name == "required_keys":
-                    recommendations.append("Output is missing required fields")
-        
-        return recommendations
-    
+
     def _assess_pattern_significance(
         self,
         pattern_data: Dict[str, Any],
         behavior_type: str
     ) -> str:
-        """Assess the significance of a behavior pattern."""
-        # Simple heuristic-based significance assessment
         pattern_size = len(str(pattern_data))
         
         if behavior_type in ["error_pattern", "failure_pattern"]:
             return "high"
-        elif pattern_size > 1000:  # Large/complex patterns
+        elif pattern_size > 1000:
             return "high"
         elif "repetition" in behavior_type.lower():
             return "medium"
@@ -653,36 +413,32 @@ class AgentObserver:
             return "low"
     
     def _analyze_behavior_patterns(self, agent_name: str) -> List[Dict[str, Any]]:
-        """Analyze behavior patterns for an agent."""
-        if agent_name not in self._behavior_patterns:
-            return []
+        patterns = ExecutionTrace.query.filter(
+            ExecutionTrace.agent_context['agent_id'].as_string() == agent_name,
+            ExecutionTrace.agent_observations != None
+        ).all()
         
-        patterns = self._behavior_patterns[agent_name]
-        
-        # Group patterns by type
         pattern_counts = {}
-        for pattern in patterns:
-            pattern_type = pattern["behavior_type"]
-            pattern_counts[pattern_type] = pattern_counts.get(pattern_type, 0) + 1
+        for trace in patterns:
+            for obs in trace.agent_observations:
+                if obs.get("type") == ObservationType.BEHAVIOR_PATTERN.value:
+                    pattern_type = obs.get("behavior_type", "unknown")
+                    pattern_counts[pattern_type] = pattern_counts.get(pattern_type, 0) + 1
         
-        # Find most common patterns
-        common_patterns = []
-        for pattern_type, count in pattern_counts.items():
-            if count >= 2:  # Only include patterns that occurred at least twice
-                common_patterns.append({
-                    "type": pattern_type,
-                    "occurrence_count": count,
-                    "significance": "medium" if count >= 5 else "low",
-                })
-        
-        return common_patterns
-    
+        return [
+            {
+                "type": pattern_type,
+                "occurrence_count": count,
+                "significance": "medium" if count >= 5 else "low",
+            }
+            for pattern_type, count in pattern_counts.items()
+            if count >= 2
+        ]
+
     def _calculate_performance_trend(self, observations: List[Dict]) -> str:
-        """Calculate performance trend from observations."""
         if len(observations) < 2:
             return "insufficient_data"
         
-        # Get quality scores over time
         quality_scores = []
         for obs in observations:
             if "quality_score" in obs:
@@ -691,7 +447,6 @@ class AgentObserver:
         if len(quality_scores) < 2:
             return "stable"
         
-        # Simple trend calculation
         recent_scores = quality_scores[-5:] if len(quality_scores) >= 5 else quality_scores
         older_scores = quality_scores[:5] if len(quality_scores) >= 10 else quality_scores[:len(quality_scores)//2]
         
@@ -709,7 +464,6 @@ class AgentObserver:
             return "stable"
     
     def _calculate_confidence_distribution(self, observations: List[Dict]) -> Dict[str, float]:
-        """Calculate distribution of confidence levels."""
         confidence_values = []
         
         for obs in observations:
@@ -727,17 +481,14 @@ class AgentObserver:
         }
     
     def _generate_agent_recommendations(self, observations: List[Dict]) -> List[str]:
-        """Generate recommendations for agent improvement."""
         recommendations = []
         
-        # Analyze quality scores
         quality_scores = [obs.get("quality_score", 0) for obs in observations if "quality_score" in obs]
         if quality_scores:
             avg_quality = sum(quality_scores) / len(quality_scores)
             if avg_quality < 0.7:
                 recommendations.append("Focus on improving output quality")
         
-        # Analyze self-criticality
         self_evaluations = [obs for obs in observations if obs.get("type") == ObservationType.SELF_EVALUATION.value]
         if self_evaluations:
             avg_self_score = sum(eval.get("overall_score", 0.5) for eval in self_evaluations) / len(self_evaluations)
@@ -746,7 +497,6 @@ class AgentObserver:
             elif avg_self_score < 0.4:
                 recommendations.append("Consider being less harsh in self-evaluations")
         
-        # Check for decision diversity
         decisions = [obs for obs in observations if obs.get("type") == ObservationType.DECISION_RATIONALE.value]
         if decisions:
             single_option_decisions = sum(1 for d in decisions if d.get("options_count", 0) <= 1)
@@ -756,9 +506,208 @@ class AgentObserver:
         return recommendations
     
     def _default_quality_thresholds(self) -> Dict[str, float]:
-        """Default quality thresholds."""
         return {
             "minimum_quality": 0.7,
             "good_quality": 0.8,
             "excellent_quality": 0.9,
         }
+
+    def apply_learned_insights(self, agent_name: str) -> List[Dict]:
+        insights = self.get_agent_insights(agent_name)
+        improvements = []
+        
+        for insight in insights.get("recommendations", []):
+            improvement = {
+                "insight": insight,
+                "applied_at": datetime.now(timezone.utc),
+                "expected_impact": "quality_improvement"
+            }
+            improvements.append(improvement)
+        
+        return improvements
+
+    def generate_insights_from_observations(
+        self,
+        agent_name: str,
+        time_window_hours: int = 24
+    ) -> List[Dict[str, Any]]:
+        try:
+            insights_summary = self.get_agent_insights(
+                agent_name=agent_name,
+                time_window_hours=time_window_hours
+            )
+            
+            if insights_summary.get("no_data"):
+                return []
+            
+            generated_insights = []
+            
+            # Insight 1: Quality trend
+            performance_trend = insights_summary.get("performance_trend")
+            avg_quality = insights_summary.get("average_quality_score", 0)
+            
+            if performance_trend == "declining" and avg_quality < 0.7 and avg_quality > 0:
+                insight = self._create_quality_insight(
+                    agent_name=agent_name,
+                    current_quality=avg_quality,
+                    trend=performance_trend,
+                    context=insights_summary
+                )
+                generated_insights.append(insight)
+            
+            # Insight 2: Decision patterns – use average_decision_quality instead of confidence_distribution
+            decision_quality = insights_summary.get("average_decision_quality", 0)
+            decision_count = insights_summary.get("decision_count", 0)
+            
+            if decision_quality < 0.9 and decision_quality > 0 and decision_count > 0:
+                insight = self._create_decision_insight(
+                    agent_name=agent_name,
+                    decision_quality=decision_quality,
+                    context=insights_summary
+                )
+                generated_insights.append(insight)
+            
+            # Insight 3: Behavior patterns
+            behavior_patterns = insights_summary.get("behavior_patterns", [])
+            if behavior_patterns:
+                for pattern in behavior_patterns:
+                    if pattern.get("significance") == "high":
+                        insight = self._create_behavior_insight(
+                            agent_name=agent_name,
+                            pattern=pattern,
+                            context=insights_summary
+                        )
+                        generated_insights.append(insight)
+            
+            # Insight 4: Self-evaluation patterns
+            recommendations = insights_summary.get("recommendations", [])
+            if recommendations:
+                insight = self._create_recommendation_insight(
+                    agent_name=agent_name,
+                    recommendations=recommendations,
+                    context=insights_summary
+                )
+                generated_insights.append(insight)
+            
+            for insight_data in generated_insights:
+                self._save_insight(insight_data)
+            
+            return generated_insights
+            
+        except Exception as e:
+            logger.error(f"Failed to generate insights: {str(e)}")
+            return []
+
+    def _create_quality_insight(
+        self,
+        agent_name: str,
+        current_quality: float,
+        trend: str,
+        context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        insight_id = f"quality_{hashlib.md5(str(time.time()).encode()).hexdigest()[:12]}"
+        gap = self._quality_thresholds["minimum_quality"] - current_quality
+        confidence = min(0.95, max(0.5, 0.5 + gap))
+        return {
+            "insight_id": insight_id,
+            "agent_name": agent_name,
+            "insight_type": "quality_improvement",
+            "insight_data": {
+                "current_quality": current_quality,
+                "trend": trend,
+                "threshold": self._quality_thresholds["minimum_quality"],
+                "gap": gap,
+                "context_summary": {
+                    "observation_count": context.get("observation_count", 0),
+                    "decision_count": context.get("decision_count", 0),
+                },
+            },
+            "confidence_score": confidence,
+            "recommended_action": "Implement additional quality checks and review error patterns",
+            "source": "quality_analysis",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _create_decision_insight(
+        self,
+        agent_name: str,
+        decision_quality: float,
+        context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        insight_id = f"decision_{hashlib.md5(str(time.time()).encode()).hexdigest()[:12]}"
+        target_quality = 0.9
+        gap = target_quality - decision_quality
+        confidence = min(0.95, max(0.5, 0.5 + gap))
+        return {
+            "insight_id": insight_id,
+            "agent_name": agent_name,
+            "insight_type": "decision_improvement",
+            "insight_data": {
+                "current_decision_quality": decision_quality,
+                "target_quality": target_quality,
+                "gap": gap,
+                "confidence_distribution": context.get("confidence_distribution", {}),
+                "context_summary": {
+                    "decision_count": context.get("decision_count", 0),
+                },
+            },
+            "confidence_score": confidence,
+            "recommended_action": "Review decision rationale and consider more alternatives",
+            "source": "decision_analysis",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _create_recommendation_insight(
+        self,
+        agent_name: str,
+        recommendations: List[str],
+        context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        insight_id = f"recommendation_{hashlib.md5(str(time.time()).encode()).hexdigest()[:12]}"
+        confidence = max(0.5, 1.0 - (len(recommendations) * 0.1))
+        return {
+            "insight_id": insight_id,
+            "agent_name": agent_name,
+            "insight_type": "optimization_suggestion",
+            "insight_data": {
+                "recommendations": recommendations,
+                "recommendation_count": len(recommendations),
+                "priority_recommendations": recommendations[:2] if len(recommendations) >= 2 else recommendations,
+                "context_summary": {
+                    "performance_trend": context.get("performance_trend"),
+                    "average_quality": context.get("average_quality_score", 0),
+                },
+            },
+            "confidence_score": confidence,
+            "recommended_action": "Implement priority recommendations",
+            "source": "recommendation_analysis",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _save_insight(self, insight_data: Dict[str, Any]) -> None:
+        try:
+            insight = AgentInsight(
+                agent_name=insight_data["agent_name"],
+                insight_type=insight_data["insight_type"],
+                insight_data=insight_data["insight_data"],
+                confidence_score=insight_data.get("confidence_score"),
+                impact_prediction="high",
+            )
+            insight.impact_prediction = insight.calculate_impact_prediction()
+            self._insight_repository.save(insight)
+            logger.debug(
+                f"Insight saved for agent '{insight.agent_name}'",
+                extra={
+                    "insight_id": insight.id,
+                    "insight_type": insight.insight_type,
+                    "impact_prediction": insight.impact_prediction,
+                }
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to save insight: {str(e)}",
+                extra={
+                    "insight_data": insight_data.get("insight_id", "unknown"),
+                    "error_type": type(e).__name__,
+                }
+            )

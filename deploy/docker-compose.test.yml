@@ -51,7 +51,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/app/Dockerfile
-      target: production
+      target: tester
     container_name: observability-app
     ports:
       - "5000:5000"

@@ -27,10 +27,7 @@ class Task(db.Model):
     completed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # Quality and performance fields
     quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    complexity_level: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    agent_involved: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     validation_results: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=dict)
     performance_metrics: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=dict)
 
@@ -60,10 +57,7 @@ class Task(db.Model):
                 self.completed_at.isoformat() if self.completed_at else None
             ),
             "quality_score": self.quality_score,
-            "complexity_level": self.complexity_level,
-            "agent_involved": self.agent_involved,
             "validation_results": self.validation_results or {},
-            "performance_metrics": self.performance_metrics or {},
             "trace_count": len(self.traces),
         }
 
@@ -83,7 +77,6 @@ class Task(db.Model):
         self.error_message = error
 
         if self.started_at and self.completed_at:
-            # Ensure both are timezone-aware for subtraction
             started_at = self.started_at
             completed_at = self.completed_at
             
@@ -96,46 +89,24 @@ class Task(db.Model):
             self.execution_time_ms = int(
                 (completed_at - started_at).total_seconds() * 1000
             )
-    
+
     def calculate_quality_score(self, success: bool) -> Optional[float]:
-        """
-        Calculate quality score based on validation results and performance.
-        
-        Args:
-            success: Whether the task execution was successful
-            
-        Returns:
-            Quality score between 0.0 and 1.0
-        """
         scores = []
         
-        # 1. Score from validation results
         if self.validation_results and self.validation_results.get("total", 0) > 0:
             validation_score = self.validation_results.get("score", 0.0)
-            scores.append(validation_score)
+            scores.append(validation_score * 0.6)
         
-        # 2. Score from execution success
-        if success:
-            scores.append(1.0)
-        else:
-            scores.append(0.0)
-        
-        # 3. Score from performance (if metrics exist)
-        if self.performance_metrics:
-            # Simple heuristic: faster execution = better quality
-            exec_time = self.performance_metrics.get("total_execution_time_ms", {}).get("value", 0)
-            if exec_time > 0:
-                time_score = max(0.0, 1.0 - (exec_time / 60000))  # 60 seconds max
-                scores.append(time_score * 0.2)  # Weighted lower
+        success_score = 1.0 if success else 0.0
+        scores.append(success_score * 0.4)
         
         if scores:
-            self.quality_score = sum(scores) / len(scores)
+            self.quality_score = sum(scores)
             return self.quality_score
         
         return None
 
     def record_validation(self, check_name: str, passed: bool, details: Optional[Dict] = None) -> None:
-        """Record a validation result."""
         if not self.validation_results:
             self.validation_results = {
                 "checks": [],
@@ -156,41 +127,16 @@ class Task(db.Model):
         if passed:
             self.validation_results["passed"] += 1
         
-        # Update score
         self.validation_results["score"] = (
             self.validation_results["passed"] / self.validation_results["total"]
             if self.validation_results["total"] > 0 else 0.0
         )
-    
+
     def record_performance_metric(self, metric_name: str, value: Any) -> None:
-        """Record a performance metric."""
         if not self.performance_metrics:
             self.performance_metrics = {}
         
         self.performance_metrics[metric_name] = {
             "value": value,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-
-    def get_observability_summary(self) -> Dict[str, Any]:
-        """Get comprehensive observability summary."""
-        return {
-            "quality": {
-                "score": self.quality_score,
-                "validation_results": self.validation_results or {},
-                "trace_count": len(self.traces),
-            },
-            "performance": {
-                "metrics": self.performance_metrics or {},
-                "execution_time_ms": self.execution_time_ms,
-            },
-            "complexity": {
-                "level": self.complexity_level,
-                "agent": self.agent_involved,
-            },
-            "execution": {
-                "status": self.status,
-                "success": self.status == "completed",
-                "error": self.error_message,
-            }
         }
