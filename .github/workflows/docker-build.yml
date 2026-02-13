@@ -1,10 +1,12 @@
-name: Build and Push Backend Docker Image
+name: Build and Push Docker Image
 
 on:
-  push:
-    branches: [ main ]
-    tags: [ 'v*' ]
-  workflow_dispatch:  # allows manual trigger
+  workflow_dispatch:  # ONLY manual trigger
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: false
+        type: string
 
 jobs:
   build-and-push:
@@ -28,9 +30,8 @@ jobs:
         with:
           images: ${{ secrets.DOCKER_USERNAME }}/observability-backend
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event.inputs.version == '' }}
+            type=raw,value=${{ github.event.inputs.version }},enable=${{ github.event.inputs.version != '' }}
             type=sha,format=short
 
       - name: Build and push Docker image
@@ -40,5 +41,3 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
