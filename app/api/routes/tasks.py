@@ -5,7 +5,7 @@ from app.schemas.task_schema import TaskCreate, TaskResponse
 from app.services.task_service import TaskService
 from app.utils.logger import get_logger
 
-task_bp = Blueprint("api", __name__, url_prefix="/api/v1")
+task_bp = Blueprint("api", __name__, url_prefix="/api")
 logger = get_logger(__name__)
 
 

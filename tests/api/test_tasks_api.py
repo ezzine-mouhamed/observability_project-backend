@@ -15,7 +15,7 @@ class TestTasksAPI:
     
     def test_health_check(self, client):
         """Test health check endpoint."""
-        response = client.get('/api/v1/health')
+        response = client.get('/api/health')
         
         assert response.status_code == 200
         data = response.json
@@ -46,7 +46,7 @@ class TestTasksAPI:
             mock_service.execute_task.return_value = mock_task_result
             
             response = client.post(
-                '/api/v1/tasks',
+                '/api/tasks',
                 json=task_data,
                 content_type='application/json'
             )
@@ -62,7 +62,7 @@ class TestTasksAPI:
     def test_create_task_invalid_json(self, client):
         """Test creating a task with invalid JSON."""
         response = client.post(
-            '/api/v1/tasks',
+            '/api/tasks',
             data="not json",
             content_type='application/json'
         )
@@ -74,7 +74,7 @@ class TestTasksAPI:
     def test_create_task_no_json(self, client):
         """Test creating a task without JSON content type."""
         response = client.post(
-            '/api/v1/tasks',
+            '/api/tasks',
             data={"test": "data"},
             content_type='application/x-www-form-urlencoded'
         )
@@ -91,7 +91,7 @@ class TestTasksAPI:
         }
         
         response = client.post(
-            '/api/v1/tasks',
+            '/api/tasks',
             json=invalid_data,
             content_type='application/json'
         )
@@ -116,7 +116,7 @@ class TestTasksAPI:
             mock_request.is_json = True
             mock_request.get_json.side_effect = Exception("Parse error")
             
-            response = client.post('/api/v1/tasks')
+            response = client.post('/api/tasks')
         
         assert response.status_code == 400
         assert "error" in response.json
@@ -134,7 +134,7 @@ class TestTasksAPI:
             mock_service.execute_task.side_effect = Exception("Service error")
             
             response = client.post(
-                '/api/v1/tasks',
+                '/api/tasks',
                 json=task_data,
                 content_type='application/json'
             )
@@ -160,7 +160,7 @@ class TestTasksAPI:
             mock_service = mock_service_class.return_value
             mock_service.get_task_by_id.return_value = mock_task
             
-            response = client.get(f'/api/v1/tasks/{task_id}')
+            response = client.get(f'/api/tasks/{task_id}')
         
         assert response.status_code == 200
         data = response.json
@@ -178,7 +178,7 @@ class TestTasksAPI:
             mock_service = mock_service_class.return_value
             mock_service.get_task_by_id.return_value = None
             
-            response = client.get(f'/api/v1/tasks/{task_id}')
+            response = client.get(f'/api/tasks/{task_id}')
         
         assert response.status_code == 404
         assert "error" in response.json
@@ -192,7 +192,7 @@ class TestTasksAPI:
             mock_service = mock_service_class.return_value
             mock_service.get_task_by_id.side_effect = Exception("DB error")
             
-            response = client.get(f'/api/v1/tasks/{task_id}')
+            response = client.get(f'/api/tasks/{task_id}')
         
         # The error should propagate - depends on TaskService implementation
         # If it raises AppException, it might be caught elsewhere
@@ -224,7 +224,7 @@ class TestTasksAPI:
             mock_service = mock_service_class.return_value
             mock_service.get_traces_for_task.return_value = mock_traces
             
-            response = client.get(f'/api/v1/tasks/{task_id}/traces')
+            response = client.get(f'/api/tasks/{task_id}/traces')
         
         assert response.status_code == 200
         data = response.json
@@ -245,7 +245,7 @@ class TestTasksAPI:
             mock_service = mock_service_class.return_value
             mock_service.get_traces_for_task.return_value = None
             
-            response = client.get(f'/api/v1/tasks/{task_id}/traces')
+            response = client.get(f'/api/tasks/{task_id}/traces')
         
         assert response.status_code == 404
         assert "error" in response.json
@@ -259,7 +259,7 @@ class TestTasksAPI:
             mock_service = mock_service_class.return_value
             mock_service.get_traces_for_task.return_value = []  # Empty list, not None
             
-            response = client.get(f'/api/v1/tasks/{task_id}/traces')
+            response = client.get(f'/api/tasks/{task_id}/traces')
         
         assert response.status_code == 200
         data = response.json
@@ -274,7 +274,7 @@ class TestTasksAPI:
             mock_service = mock_service_class.return_value
             mock_service.get_traces_for_task.side_effect = Exception("DB error")
             
-            response = client.get(f'/api/v1/tasks/{task_id}/traces')
+            response = client.get(f'/api/tasks/{task_id}/traces')
         
         # Error should propagate
         assert response.status_code == 500
@@ -291,7 +291,7 @@ class TestTasksAPIEdgeCases:
         }
         
         response = client.post(
-            '/api/v1/tasks',
+            '/api/tasks',
             json=invalid_data,
             content_type='application/json'
         )
@@ -307,7 +307,7 @@ class TestTasksAPIEdgeCases:
         }
         
         response = client.post(
-            '/api/v1/tasks',
+            '/api/tasks',
             json=invalid_data,
             content_type='application/json'
         )
@@ -318,7 +318,7 @@ class TestTasksAPIEdgeCases:
     def test_get_task_invalid_id(self, client):
         """Test getting a task with invalid ID format."""
         # Test with non-numeric ID
-        response = client.get('/api/v1/tasks/abc')
+        response = client.get('/api/tasks/abc')
         
         # Flask will return 404 for route not found since 'abc' doesn't match int
         assert response.status_code == 404
@@ -326,7 +326,7 @@ class TestTasksAPIEdgeCases:
     def test_get_task_traces_invalid_id(self, client):
         """Test getting traces with invalid task ID format."""
         # Test with non-numeric ID
-        response = client.get('/api/v1/tasks/abc/traces')
+        response = client.get('/api/tasks/abc/traces')
         
         # Flask will return 404 for route not found
         assert response.status_code == 404
@@ -345,7 +345,7 @@ class TestTasksAPIEdgeCases:
             mock_service.execute_task.return_value = Mock(spec=TaskResult)
             
             response = client.post(
-                '/api/v1/tasks',
+                '/api/tasks',
                 json=task_data,
                 content_type='application/json'
             )
@@ -368,7 +368,7 @@ class TestTasksAPIEdgeCases:
             mock_service.execute_task.return_value = Mock(spec=TaskResult)
             
             response = client.post(
-                '/api/v1/tasks',
+                '/api/tasks',
                 json=task_data,
                 content_type='application/json'
             )
@@ -390,7 +390,7 @@ class TestTasksAPIEdgeCases:
             mock_service.execute_task.return_value = Mock(spec=TaskResult)
             
             response = client.post(
-                '/api/v1/tasks',
+                '/api/tasks',
                 json=task_data,
                 content_type='application/json'
             )
