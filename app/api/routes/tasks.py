@@ -53,3 +53,10 @@ def get_task_traces(task_id):
         return jsonify({"error": "Task not found"}), 404
 
     return jsonify([trace.to_dict() for trace in traces]), 200
+
+@task_bp.route('/tasks/recent', methods=['GET'])
+def get_recent_tasks():
+    task_service = TaskService()
+    recent_tasks = task_service.get_recent_tasks(limit=20)
+    response = [TaskResponse.model_validate(task).model_dump() for task in recent_tasks]
+    return jsonify(response), 200

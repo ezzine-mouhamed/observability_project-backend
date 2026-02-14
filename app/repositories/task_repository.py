@@ -114,3 +114,7 @@ class TaskRepository:
             "by_type": by_type,
             "avg_execution_time": avg_execution_time,
         }
+
+    def get_recent_tasks(self, limit: int = 20) -> List[Task]:
+        """Return the most recently created tasks."""
+        return Task.query.order_by(Task.created_at.desc()).limit(limit).all()

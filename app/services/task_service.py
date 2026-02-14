@@ -1394,3 +1394,12 @@ class TaskService:
                     "error": str(e),
                 }
             )
+
+    def get_recent_tasks(self, limit: int = 20) -> List[Task]:
+        try:
+            return self.task_repo.get_recent_tasks(limit)
+        except Exception as e:
+            raise AppException(
+                message=f"Failed to retrieve recent tasks: {str(e)}",
+                extra={"limit": limit, "original_exception_type": type(e).__name__}
+            ) from e
