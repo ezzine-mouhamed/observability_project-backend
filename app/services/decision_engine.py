@@ -12,6 +12,8 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+AGENT_NAME="decision_engine"
+
 class DecisionEngine:
     def __init__(self, 
             tracer: Optional[Tracer] = None,
@@ -27,7 +29,7 @@ class DecisionEngine:
         original_context = self.tracer.get_current_agent_context()
         
         self.tracer.update_agent_context(
-            agent_id="decision_engine",
+            agent_id=AGENT_NAME,
             agent_type="planner",
             goal=f"Create execution plan for {task_type}",
             total_steps=3,
@@ -39,7 +41,7 @@ class DecisionEngine:
         ):
             try:
                 self.observer.record_thought_process(
-                    agent_name="decision_engine",
+                    agent_name=AGENT_NAME,
                     input_data={"task_type": task_type, "parameters": parameters},
                     thought_chain=[
                         f"Starting execution plan for {task_type}",
@@ -73,7 +75,7 @@ class DecisionEngine:
                 
                 self.observer.record_decision_rationale(
                     decision_id=f"complexity_{task_type}_{start_time.timestamp()}",
-                    agent_name="decision_engine",
+                    agent_name=AGENT_NAME,
                     options_considered=complexity_options,
                     chosen_option={"name": complexity, "reason": self._get_complexity_reason(task_type, parameters)},
                     rationale=f"Selected {complexity} based on task type '{task_type}' and parameter analysis",
@@ -100,7 +102,7 @@ class DecisionEngine:
                             "complexity": complexity,
                         }
                     )
-                plan["agent"] = "decision_engine"
+                plan["agent"] = AGENT_NAME
                 
                 self.tracer.increment_agent_step()
                 
@@ -115,7 +117,7 @@ class DecisionEngine:
                 
                 self.observer.record_decision_rationale(
                     decision_id=f"plan_selection_{plan['id']}",
-                    agent_name="decision_engine",
+                    agent_name=AGENT_NAME,
                     options_considered=plan_options,
                     chosen_option={
                         "name": f"{complexity}_plan",
@@ -299,7 +301,7 @@ class DecisionEngine:
             return {
                 "id": f"simple_{task_type}_{datetime.now(timezone.utc).timestamp()}",
                 "complexity": "simple",
-                "agent": "decision_engine",
+                "agent": AGENT_NAME,
                 "reason": "Task assessed as low complexity",
                 "steps": [
                     {
@@ -341,7 +343,7 @@ class DecisionEngine:
             return {
                 "id": f"moderate_{task_type}_{datetime.now(timezone.utc).timestamp()}",
                 "complexity": "moderate",
-                "agent": "decision_engine",
+                "agent": AGENT_NAME,
                 "reason": "Task requires validation and processing",
                 "steps": [
                     {
@@ -387,7 +389,7 @@ class DecisionEngine:
             return {
                 "id": f"complex_{task_type}_{datetime.now(timezone.utc).timestamp()}",
                 "complexity": "complex",
-                "agent": "decision_engine",
+                "agent": AGENT_NAME,
                 "reason": "Task requires multi-stage processing and validation",
                 "steps": [
                     {

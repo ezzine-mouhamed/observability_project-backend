@@ -141,7 +141,7 @@ def get_observability_summary():
             "summary": {
                 "time_window_hours": time_window,
                 "generated_at": datetime.now(timezone.utc).isoformat(),
-                "agent_count": agent_metrics.get("total_agents", 0),
+                "agent_count": agent_metrics.get("total_agents", 1),
                 "total_traces": agent_metrics.get("total_traces", 0),
                 "overall_success_rate": agent_metrics.get("success_rate", 0),
                 "overall_quality": quality_metrics.get("overall_metrics", {}).get("average", 0),
