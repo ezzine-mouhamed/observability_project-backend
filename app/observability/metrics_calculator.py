@@ -47,11 +47,13 @@ class MetricsCalculator:
         quality_scores = []
         for trace in traces:
             if trace.quality_metrics and "composite_quality_score" in trace.quality_metrics:
-                quality_scores.append(trace.quality_metrics["composite_quality_score"])
+                score = trace.quality_metrics["composite_quality_score"]
+                if score is not None:
+                    quality_scores.append(score)
         
         avg_quality = statistics.mean(quality_scores) if quality_scores else 0.0
         
-        durations = [t.duration_ms for t in traces if t.duration_ms]
+        durations = [t.duration_ms for t in traces if t.duration_ms is not None]
         avg_duration = statistics.mean(durations) if durations else 0.0
         
         total_decisions = 0
@@ -62,7 +64,7 @@ class MetricsCalculator:
                 for decision in trace.decisions:
                     if isinstance(decision, dict) and "quality" in decision:
                         quality = decision["quality"]
-                        if isinstance(quality, dict) and "overall_score" in quality:
+                        if isinstance(quality, dict) and quality.get("overall_score") is not None:
                             decision_qualities.append(quality["overall_score"])
 
         avg_decisions_per_trace = total_decisions / len(traces) if traces else 0.0
@@ -171,7 +173,9 @@ class MetricsCalculator:
             quality_scores = []
             for trace in group_traces:
                 if trace.quality_metrics and "composite_quality_score" in trace.quality_metrics:
-                    quality_scores.append(trace.quality_metrics["composite_quality_score"])
+                    score = trace.quality_metrics["composite_quality_score"]
+                    if score is not None:
+                        quality_scores.append(score)
             
             if quality_scores:
                 avg_quality = statistics.mean(quality_scores)
@@ -406,7 +410,7 @@ class MetricsCalculator:
                 
                 sequence_analysis[agent_id] = {
                     "total_operations": len(sequences),
-                    "success_rate": len([s for s in sequences if s["success"]]) / len(sequences),
+                    "success_rate": len([s for s in sequences if s["success"]]) / len(sequences) if sequences else 0,
                     "common_sequences": dict(common_sequences),
                     "average_duration": statistics.mean([s["duration"] for s in sequences if s["duration"]]) 
                     if any(s["duration"] for s in sequences) else 0,
@@ -427,7 +431,7 @@ class MetricsCalculator:
             if len(sequences) >= 3:
                 operations = [s["operation"] for s in sequences]
                 unique_operations = set(operations)
-                consistency_score = len(unique_operations) / len(operations)
+                consistency_score = len(unique_operations) / len(operations) if operations else 0
                 
                 behavioral_consistency[agent_id] = {
                     "consistency_score": consistency_score,
@@ -466,7 +470,9 @@ class MetricsCalculator:
         quality_scores = []
         for trace in traces:
             if trace.quality_metrics and "composite_quality_score" in trace.quality_metrics:
-                quality_scores.append(trace.quality_metrics["composite_quality_score"])
+                score = trace.quality_metrics["composite_quality_score"]
+                if score is not None:
+                    quality_scores.append(score)
         
         if not quality_scores:
             return {}
@@ -491,16 +497,17 @@ class MetricsCalculator:
         for trace in traces:
             if trace.quality_metrics and "composite_quality_score" in trace.quality_metrics:
                 score = trace.quality_metrics["composite_quality_score"]
-                if score >= 0.9:
-                    distribution["excellent"] += 1
-                elif score >= 0.8:
-                    distribution["good"] += 1
-                elif score >= 0.6:
-                    distribution["acceptable"] += 1
-                elif score >= 0.4:
-                    distribution["needs_improvement"] += 1
-                else:
-                    distribution["poor"] += 1
+                if score is not None:
+                    if score >= 0.9:
+                        distribution["excellent"] += 1
+                    elif score >= 0.8:
+                        distribution["good"] += 1
+                    elif score >= 0.6:
+                        distribution["acceptable"] += 1
+                    elif score >= 0.4:
+                        distribution["needs_improvement"] += 1
+                    else:
+                        distribution["poor"] += 1
         
         return distribution
     
@@ -512,16 +519,16 @@ class MetricsCalculator:
     ) -> List[str]:
         recommendations = []
         
-        if success_rate < 0.7:
+        if success_rate is not None and success_rate < 0.7:
             recommendations.append("Focus on improving success rate through better error handling")
         
-        if avg_quality < 0.7:
+        if avg_quality is not None and avg_quality < 0.7:
             recommendations.append("Implement more rigorous quality checks for outputs")
         
-        if avg_decision_quality < 0.6:
+        if avg_decision_quality is not None and avg_decision_quality < 0.6:
             recommendations.append("Improve decision-making process with more alternatives and rationale")
         
-        if success_rate > 0.9 and avg_quality > 0.85:
+        if success_rate is not None and avg_quality is not None and success_rate > 0.9 and avg_quality > 0.85:
             recommendations.append("Consider optimizing for efficiency and speed")
         
         return recommendations

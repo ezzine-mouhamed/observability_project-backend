@@ -197,19 +197,20 @@ def _generate_key_insights(agent_metrics, quality_metrics, decision_analytics):
     
     # Agent performance insights
     success_rate = agent_metrics.get("success_rate", 0)
-    if success_rate < 0.7:
-        insights.append(f"Low overall success rate ({success_rate:.1%}) - consider improving error handling")
-    elif success_rate > 0.9:
-        insights.append(f"High overall success rate ({success_rate:.1%}) - system is performing well")
+    if success_rate is not None:
+        if success_rate < 0.7:
+            insights.append(f"Low overall success rate ({success_rate:.1%}) - consider improving error handling")
+        elif success_rate > 0.9:
+            insights.append(f"High overall success rate ({success_rate:.1%}) - system is performing well")
     
     # Quality insights
     overall_quality = quality_metrics.get("overall_metrics", {}).get("average", 0)
-    if overall_quality < 0.7:
+    if overall_quality is not None and overall_quality < 0.7:
         insights.append(f"Quality needs improvement (score: {overall_quality:.2f})")
     
     # Decision insights
     decision_quality = decision_analytics.get("average_decision_quality", 0)
-    if decision_quality < 0.6:
+    if decision_quality is not None and decision_quality < 0.6:
         insights.append(f"Decision quality could be improved (score: {decision_quality:.2f})")
     
     # Add trend-based insights
@@ -229,7 +230,7 @@ def _generate_agent_recommendations(insights, performance):
     
     # Quality-based recommendations
     quality_score = performance.get("average_quality_score", 0)
-    if quality_score < 0.7:
+    if quality_score is not None and quality_score < 0.7:
         recommendations.append({
             "type": "quality",
             "priority": "high",
@@ -239,7 +240,7 @@ def _generate_agent_recommendations(insights, performance):
     
     # Success rate recommendations
     success_rate = performance.get("success_rate", 0)
-    if success_rate < 0.7:
+    if success_rate is not None and success_rate < 0.7:
         recommendations.append({
             "type": "reliability",
             "priority": "high",
@@ -249,7 +250,7 @@ def _generate_agent_recommendations(insights, performance):
     
     # Decision quality recommendations
     decision_quality = performance.get("average_decision_quality", 0)
-    if decision_quality < 0.6:
+    if decision_quality is not None and decision_quality < 0.6:
         recommendations.append({
             "type": "decision_making",
             "priority": "medium",
@@ -259,7 +260,7 @@ def _generate_agent_recommendations(insights, performance):
     
     # Efficiency recommendations
     avg_duration = performance.get("average_duration_ms", 0)
-    if avg_duration > 5000:  # 5 seconds
+    if avg_duration is not None and avg_duration > 5000:  # 5 seconds
         recommendations.append({
             "type": "efficiency",
             "priority": "medium",

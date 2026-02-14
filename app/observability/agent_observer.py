@@ -268,7 +268,9 @@ class AgentObserver:
                     observations.append(obs_copy)
                 
                 if trace.quality_metrics and "composite_quality_score" in trace.quality_metrics:
-                    quality_scores.append(trace.quality_metrics["composite_quality_score"])
+                    score = trace.quality_metrics["composite_quality_score"]
+                    if score is not None:
+                        quality_scores.append(score)
                 
                 if trace.decisions:
                     for decision in trace.decisions:
@@ -286,7 +288,9 @@ class AgentObserver:
                     observations.append(obs_copy)
                 
                 if trace_dict.get("quality_metrics", {}).get("composite_quality_score"):
-                    quality_scores.append(trace_dict["quality_metrics"]["composite_quality_score"])
+                    score = trace_dict["quality_metrics"]["composite_quality_score"]
+                    if score is not None:
+                        quality_scores.append(score)
                 
                 if trace_dict.get("decisions"):
                     for decision in trace_dict["decisions"]:
@@ -441,7 +445,7 @@ class AgentObserver:
         
         quality_scores = []
         for obs in observations:
-            if "quality_score" in obs:
+            if "quality_score" in obs and obs["quality_score"] is not None:
                 quality_scores.append(obs["quality_score"])
         
         if len(quality_scores) < 2:
@@ -467,7 +471,7 @@ class AgentObserver:
         confidence_values = []
         
         for obs in observations:
-            if "confidence_score" in obs:
+            if "confidence_score" in obs and obs["confidence_score"] is not None:
                 confidence_values.append(obs["confidence_score"])
         
         if not confidence_values:
@@ -483,7 +487,7 @@ class AgentObserver:
     def _generate_agent_recommendations(self, observations: List[Dict]) -> List[str]:
         recommendations = []
         
-        quality_scores = [obs.get("quality_score", 0) for obs in observations if "quality_score" in obs]
+        quality_scores = [obs.get("quality_score") for obs in observations if "quality_score" in obs and obs["quality_score"] is not None]
         if quality_scores:
             avg_quality = sum(quality_scores) / len(quality_scores)
             if avg_quality < 0.7:
@@ -491,11 +495,13 @@ class AgentObserver:
         
         self_evaluations = [obs for obs in observations if obs.get("type") == ObservationType.SELF_EVALUATION.value]
         if self_evaluations:
-            avg_self_score = sum(eval.get("overall_score", 0.5) for eval in self_evaluations) / len(self_evaluations)
-            if avg_self_score > 0.9:
-                recommendations.append("Consider being more self-critical in evaluations")
-            elif avg_self_score < 0.4:
-                recommendations.append("Consider being less harsh in self-evaluations")
+            scores = [eval.get("overall_score") for eval in self_evaluations if eval.get("overall_score") is not None]
+            if scores:
+                avg_self_score = sum(scores) / len(scores)
+                if avg_self_score > 0.9:
+                    recommendations.append("Consider being more self-critical in evaluations")
+                elif avg_self_score < 0.4:
+                    recommendations.append("Consider being less harsh in self-evaluations")
         
         decisions = [obs for obs in observations if obs.get("type") == ObservationType.DECISION_RATIONALE.value]
         if decisions:
@@ -546,7 +552,7 @@ class AgentObserver:
             performance_trend = insights_summary.get("performance_trend")
             avg_quality = insights_summary.get("average_quality_score", 0)
             
-            if performance_trend == "declining" and avg_quality < 0.7 and avg_quality > 0:
+            if performance_trend == "declining" and avg_quality is not None and avg_quality < 0.7 and avg_quality > 0:
                 insight = self._create_quality_insight(
                     agent_name=agent_name,
                     current_quality=avg_quality,
@@ -559,7 +565,7 @@ class AgentObserver:
             decision_quality = insights_summary.get("average_decision_quality", 0)
             decision_count = insights_summary.get("decision_count", 0)
             
-            if decision_quality < 0.9 and decision_quality > 0 and decision_count > 0:
+            if decision_quality is not None and decision_quality < 0.9 and decision_quality > 0 and decision_count > 0:
                 insight = self._create_decision_insight(
                     agent_name=agent_name,
                     decision_quality=decision_quality,
@@ -606,7 +612,7 @@ class AgentObserver:
         context: Dict[str, Any]
     ) -> Dict[str, Any]:
         insight_id = f"quality_{hashlib.md5(str(time.time()).encode()).hexdigest()[:12]}"
-        gap = self._quality_thresholds["minimum_quality"] - current_quality
+        gap = self._quality_thresholds["minimum_quality"] - (current_quality if current_quality is not None else 0)
         confidence = min(0.95, max(0.5, 0.5 + gap))
         return {
             "insight_id": insight_id,
@@ -636,7 +642,7 @@ class AgentObserver:
     ) -> Dict[str, Any]:
         insight_id = f"decision_{hashlib.md5(str(time.time()).encode()).hexdigest()[:12]}"
         target_quality = 0.9
-        gap = target_quality - decision_quality
+        gap = target_quality - (decision_quality if decision_quality is not None else 0)
         confidence = min(0.95, max(0.5, 0.5 + gap))
         return {
             "insight_id": insight_id,
@@ -654,6 +660,28 @@ class AgentObserver:
             "confidence_score": confidence,
             "recommended_action": "Review decision rationale and consider more alternatives",
             "source": "decision_analysis",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _create_behavior_insight(
+        self,
+        agent_name: str,
+        pattern: Dict[str, Any],
+        context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        insight_id = f"behavior_{hashlib.md5(str(time.time()).encode()).hexdigest()[:12]}"
+        return {
+            "insight_id": insight_id,
+            "agent_name": agent_name,
+            "insight_type": "behavior_insight",
+            "insight_data": {
+                "pattern_type": pattern.get("type"),
+                "occurrence_count": pattern.get("occurrence_count"),
+                "significance": pattern.get("significance"),
+            },
+            "confidence_score": 0.8,
+            "recommended_action": "Monitor this behavior pattern",
+            "source": "behavior_analysis",
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
